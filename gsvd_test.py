@@ -15,6 +15,9 @@ def gsvd(name: Literal["llama", "mistral", "vicuna"] = "llama", layer_id: Option
     model.eval()
     model.to(device)
 
+    use_cache = model.config.use_cache
+    model.config.use_cache = False
+
     grads = {}
     
     def collect_gradients_hook_fn(target_layer_id: int, target_layer_type: str):
