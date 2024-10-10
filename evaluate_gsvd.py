@@ -15,7 +15,7 @@ class EvalLM(BaseLM):
         self,
         model,
         tokenizer,
-        # device="cuda:0",
+        device: Literal["cuda:0", "cpu"] = "cuda:0",
         batch_size=1,
     ):
         super().__init__()
@@ -23,11 +23,8 @@ class EvalLM(BaseLM):
         # assert isinstance(device, str)
         assert isinstance(batch_size, int)
 
-        # self._device = torch.device(device)
-        self._device = model.device
-
-        # self.model = model.to(self.device)
-        self.model = model
+        self._device = torch.device(device)
+        self.model = model.to(self.device)
         self.model.eval()
 
         self.tokenizer = tokenizer

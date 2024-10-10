@@ -9,9 +9,9 @@ from typing import Literal, Optional, List, Union
 class GSVDLayer(nn.Module):
     def __init__(self, U: torch.Tensor, S: torch.Tensor, Vh: torch.Tensor):
         super(GSVDLayer, self).__init__()
-        self.U = U
+        self.U = nn.Parameter(U.clone().detach().requires_grad_(False))
         self.S = nn.Parameter(S.clone().detach().requires_grad_(True))
-        self.Vh = Vh
+        self.Vh = nn.Parameter(Vh.clone().detach().requires_grad_(False))
 
     def forward(self, x: torch.Tensor):
         b, s, d = x.shape
@@ -36,18 +36,17 @@ class GSVDModel(nn.Module):
 
     def replace_with_GSVDLayer(self, target_layer: str):
         replace_flag = False
-        for name, module in self.model.named_modules():
-            if name == target_layer:
-                if isinstance(module, nn.Linear):
-                    U, S, Vh = torch.linalg.svd(module.weight.data, full_matrices=False)
-                    gsvd_layer = GSVDLayer(U=U, S=S, Vh=Vh)
-                    self._set_module(self.model, name, gsvd_layer)
-                    replace_flag = True
-                    break
-                else:
-                    raise TypeError(f"target layer should be of Linear module, but got {type(module)}")
+        module = self.model.get_submodule(target=target_layer)
+        if module is not None:
+            if isinstance(module, nn.Linear):
+                U, S, Vh = torch.linalg.svd(module.weight.data, full_matrices=False)
+                gsvd_layer = GSVDLayer(U=U, S=S, Vh=Vh)
+                self._set_module(self.model, target_layer, gsvd_layer)
+                replace_flag = True
+            else:
+                raise TypeError(f"target layer should be of Linear module, but got {type(module)}")
         if not replace_flag:
-            print("failed to replace with GSVDLayer, target layer not found in model")
+            print(f"failed to replace with GSVDLayer, target layer: {target_layer} not found in model")
             return
     
     def compress_block(
@@ -64,7 +63,7 @@ class GSVDModel(nn.Module):
         
         for layer_id in layers_id:
             base_layer_name = f"model.layers.{layer_id}."
-            target_layer_names = [base_layer_name.join(target_layer_type) for target_layer_type in target_layer_types]
+            target_layer_names = [base_layer_name + target_layer_type for target_layer_type in target_layer_types]
             for target_layer in target_layer_names:
                 self.replace_with_GSVDLayer(target_layer=target_layer)
         
@@ -84,7 +83,7 @@ class GSVDModel(nn.Module):
 
         return gsvd_layer_names
 
-    def get_svdlayer_gradients(self, calibration_dataloader: DataLoader, device: Literal["cuda", "cpu"] = "cpu", *args, **kwargs):
+    def get_svdlayer_gradients(self, calibration_dataloader: DataLoader, device: Literal["cuda:0", "cpu"] = "cuda:0", *args, **kwargs):
         gsvd_layer_names = self.check_exists_gsvd_layer()
         if not gsvd_layer_names:
             raise NotImplementedError("GSVDLayer not found, can not compute gradients, please use GSVDModel.replace_with_GSVDLayer first")
@@ -92,6 +91,9 @@ class GSVDModel(nn.Module):
         iterator = tqdm(calibration_dataloader, total=len(calibration_dataloader), leave=True, colour="red")
         gsvd_layer_grads = {}
         for batch_idx, (inputs, labels) in enumerate(iterator):
+            inputs = inputs.to(device=device)
+            labels = labels.to(device=device)
+            self.model.to(device=device)
             outputs = self.model(input_ids=inputs, labels=labels, use_cache=False)
             loss = outputs[0]
 
@@ -118,8 +120,8 @@ class GSVDModel(nn.Module):
             self,
             gsvd_layer_grads: dict,
             mode: Literal["gradient", "taylor"] = "gradient",
-            gradient_threshold: float = 0.1,
-            taylor_threshold: float = 0.1,
+            gradient_threshold: float = 0.01,
+            taylor_threshold: float = 0.01,
             compression_ratio: Optional[float] = None
         ):
         if not gsvd_layer_grads:
@@ -181,17 +183,22 @@ class GSVDModel(nn.Module):
     def compile_gsvd_model(
         self,
         indices_dict: Optional[dict] = None,
-        merge: bool = True
+        merge: bool = True,
+        verbose: bool = True
     ):
         if indices_dict is None:
             indices_dict = self.indices_dict
 
+        rank_dict = {}
+
         for gsvd_layer_name, indices in indices_dict.items():
             gsvd_layer: GSVDLayer = self.model.get_submodule(gsvd_layer_name)
 
-            S = gsvd_layer.S = gsvd_layer.S[indices]
-            U = gsvd_layer.U = gsvd_layer.U[:, indices]
-            Vh = gsvd_layer.Vh = gsvd_layer.Vh[indices, :]
+            S = gsvd_layer.S[indices]
+            U = gsvd_layer.U[:, indices]
+            Vh = gsvd_layer.Vh[indices, :]
+
+            rank_dict[gsvd_layer_name] = U.shape[0]
 
         if merge:
             in_features = Vh.shape[1]
@@ -200,6 +207,9 @@ class GSVDModel(nn.Module):
             linear_layer: nn.Linear = self.model.get_submodule(gsvd_layer_name)
             W_compressed = torch.mm(U, torch.mm(torch.diag(S), Vh))
             linear_layer.weight.data = W_compressed.t()
+
+        if verbose:
+            print(f"Rank of layer after compression: \n{rank_dict}")
 
         print("Done!")
         return

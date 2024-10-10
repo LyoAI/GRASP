@@ -46,7 +46,7 @@ def get_calibration_dataloader(
         )
         random_indices = random.sample(range(len(train_data)), num_samples)
         train_dataset = process_data(train_data[random_indices], tokenizer, seq_len, 'text')
-    if 'ptb' in dataset_name:
+    elif 'ptb' in dataset_name:
         train_data = load_dataset(
             'ptb_text_only',
             'penn_treebank',
