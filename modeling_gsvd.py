@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
-from typing import Literal, Optional
+from typing import Literal, Optional, List, Union
 
 
 class GSVDLayer(nn.Module):
@@ -49,6 +49,29 @@ class GSVDModel(nn.Module):
         if not replace_flag:
             print("failed to replace with GSVDLayer, target layer not found in model")
             return
+    
+    def compress_block(
+            self,
+            layers_id: Union[List[int], int],
+            target_layer_types: Optional[Union[List[str], str]] = None,
+            verbose: bool  = False
+        ):
+        '''
+        Compress transformer-based LLM within a transformer block using GSVD
+        '''
+        if isinstance(layers_id, int):
+            layers_id = [layers_id]
+        
+        for layer_id in layers_id:
+            base_layer_name = f"model.layers.{layer_id}."
+            target_layer_names = [base_layer_name.join(target_layer_type) for target_layer_type in target_layer_types]
+            for target_layer in target_layer_names:
+                self.replace_with_GSVDLayer(target_layer=target_layer)
+        
+        if verbose:
+            print(self)
+        
+        return
 
     def check_exists_gsvd_layer(self):
         gsvd_layer_names = []
@@ -157,7 +180,8 @@ class GSVDModel(nn.Module):
 
     def compile_gsvd_model(
         self,
-        indices_dict: Optional[dict] = None
+        indices_dict: Optional[dict] = None,
+        merge: bool = True
     ):
         if indices_dict is None:
             indices_dict = self.indices_dict
@@ -165,13 +189,13 @@ class GSVDModel(nn.Module):
         for gsvd_layer_name, indices in indices_dict.items():
             gsvd_layer: GSVDLayer = self.model.get_submodule(gsvd_layer_name)
 
-            S = gsvd_layer.S[indices]
-            U = gsvd_layer.U[:, indices]
-            Vh = gsvd_layer.Vh[indices, :]
+            S = gsvd_layer.S = gsvd_layer.S[indices]
+            U = gsvd_layer.U = gsvd_layer.U[:, indices]
+            Vh = gsvd_layer.Vh = gsvd_layer.Vh[indices, :]
 
+        if merge:
             in_features = Vh.shape[1]
             out_features = U.shape[0]
-
             self._set_module(self.model, gsvd_layer_name, nn.Linear(in_features=in_features, out_features=out_features, bias=False))
             linear_layer: nn.Linear = self.model.get_submodule(gsvd_layer_name)
             W_compressed = torch.mm(U, torch.mm(torch.diag(S), Vh))

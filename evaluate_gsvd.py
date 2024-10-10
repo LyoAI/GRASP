@@ -1,3 +1,5 @@
+# from https://github.com/hahnyuan/ASVD4LLM/blob/main/tools/eval_longbench.py
+
 import os
 import sys
 import torch
@@ -11,7 +13,6 @@ from lm_eval import evaluator
 from typing import Optional, Literal
 from dataset.loader import get_evaluation_dataloader
 
-# from https://github.com/hahnyuan/ASVD4LLM/blob/main/tools/eval_longbench.py
 
 class EvalLM(BaseLM):
     def __init__(
@@ -145,7 +146,7 @@ def evaluate_model(
             cache_testloader = f"/tmp/{dataset}_testloader_{model_name.replace('/', '_')}_all.cache"
             if os.path.exists(cache_testloader):
                 testloader = torch.load(cache_testloader)
-                # print(f"load calibration from {cache_testloader}")
+                print(f"load calibration from {cache_testloader}")
             else:
                 testloader = get_evaluation_dataloader(dataset, tokenizer)
                 torch.save(testloader, cache_testloader)
@@ -173,14 +174,6 @@ def evaluate_model(
                 nlls.append(neg_log_likelihood)
                 if i == limit:
                     break
-                # if i == 1:
-                #     print(
-                #         "memory_allocated",
-                #         i,
-                #         torch.cuda.memory_allocated() / 1024 / 1024,
-                #         "max memory_allocated",
-                #         torch.cuda.max_memory_allocated() / 1024**2,
-                #     )
 
             ppl = torch.exp(torch.stack(nlls).sum() / (len(nlls) * lm.seqlen))
             print(dataset, ppl.item())
