@@ -198,7 +198,7 @@ class GSVDModel(nn.Module):
             U = gsvd_layer.U[:, indices]
             Vh = gsvd_layer.Vh[indices, :]
 
-            rank_dict[gsvd_layer_name] = U.shape[0]
+            rank_dict[gsvd_layer_name] = S.shape[0]
 
         if merge:
             in_features = Vh.shape[1]
@@ -206,7 +206,7 @@ class GSVDModel(nn.Module):
             self._set_module(self.model, gsvd_layer_name, nn.Linear(in_features=in_features, out_features=out_features, bias=False))
             linear_layer: nn.Linear = self.model.get_submodule(gsvd_layer_name)
             W_compressed = torch.mm(U, torch.mm(torch.diag(S), Vh))
-            linear_layer.weight.data = W_compressed.t()
+            linear_layer.weight.data = W_compressed
 
         if verbose:
             print(f"Rank of layer after compression: \n{rank_dict}")
