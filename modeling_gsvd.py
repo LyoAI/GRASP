@@ -52,7 +52,7 @@ class GSVDModel(nn.Module):
     def compress_block(
             self,
             layers_id: Union[List[int], int],
-            target_layer_types: Optional[Union[List[str], str]] = None,
+            target_layer_types: Union[List[str], str] = ["mlp.down_proj", "mlp.up_proj", "self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj"],
             verbose: bool  = False
         ):
         '''
@@ -60,6 +60,9 @@ class GSVDModel(nn.Module):
         '''
         if isinstance(layers_id, int):
             layers_id = [layers_id]
+        
+        if not target_layer_types:
+            raise ValueError("Target layer types should be given, but got None")
         
         for layer_id in layers_id:
             base_layer_name = f"model.layers.{layer_id}."
