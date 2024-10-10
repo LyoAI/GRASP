@@ -1,14 +1,10 @@
 # from https://github.com/hahnyuan/ASVD4LLM/blob/main/tools/eval_longbench.py
 
 import os
-import sys
 import torch
 import torch.nn as nn
-import numpy as np
-import time
-import itertools
 from tqdm import tqdm
-from lm_eval.base import BaseLM # type: ignore
+from lm_eval.base import BaseLM
 from lm_eval import evaluator
 from typing import Optional, Literal
 from dataset.loader import get_evaluation_dataloader
