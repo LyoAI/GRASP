@@ -36,12 +36,17 @@ class GSVDModel(nn.Module):
             sub_model = getattr(sub_model, token)
         setattr(sub_model, tokens[-1], module)
 
-    def replace_with_GSVDLayer(self, target_layer: str):
+    def replace_with_GSVDLayer(self, target_layer: str, device: Literal["cuda:0", "cpu"] = "cuda:0"):
         replace_flag = False
         module = self.model.get_submodule(target=target_layer)
         if module is not None:
             if isinstance(module, nn.Linear):
-                U, S, Vh = torch.linalg.svd(module.weight.data.cuda(), full_matrices=False)
+                if "cuda" in device:
+                    U, S, Vh = torch.linalg.svd(module.weight.data.cuda(), full_matrices=False)
+                elif "cpu" in device:
+                    U, S, Vh = torch.linalg.svd(module.weight.data, full_matrices=False)
+                else:
+                    raise ValueError(f"device type {device} not support")
                 bias = module.bias
                 gsvd_layer = GSVDLayer(U=U, S=S, Vh=Vh, bias=bias)
                 self._set_module(self.model, target_layer, gsvd_layer)
@@ -67,8 +72,6 @@ class GSVDModel(nn.Module):
         if not target_layer_types:
             raise ValueError("Target layer types should be given, but got None")
         
-        print("=======> Start Low-Rank Compressing transformer-based LLM blocks")
-        
         for layer_id in layers_id:
             base_layer_name = f"model.layers.{layer_id}."
             target_layer_names = [base_layer_name + target_layer_type for target_layer_type in target_layer_types]
@@ -77,8 +80,6 @@ class GSVDModel(nn.Module):
         
         if verbose:
             print(self)
-
-        print("=======> Done!")
         
         return
 
@@ -154,7 +155,7 @@ class GSVDModel(nn.Module):
     def dynamic_svd_selection(
             self,
             gsvd_layer_grads: dict,
-            mode: Literal["gradient", "taylor"] = "gradient",
+            metric: Literal["gradient", "taylor"] = "gradient",
             gradient_threshold: Optional[float] = None,
             taylor_threshold: Optional[float] = None,
             compression_ratio: Optional[float] = None
@@ -165,7 +166,7 @@ class GSVDModel(nn.Module):
 
         indices_dict = {}
 
-        if mode == "gradient":
+        if metric == "gradient":
             if gradient_threshold and compression_ratio:
                 raise RuntimeError("can not set gradient threshold and compression ratio at the same time")
 
@@ -185,7 +186,7 @@ class GSVDModel(nn.Module):
             else:
                 raise NotImplementedError("set gradient threshold or compression ratio")
 
-        elif mode == "taylor":
+        elif metric == "taylor":
             if taylor_threshold and compression_ratio:
                 raise RuntimeError("can not set gradient threshold and compression ratio at the same time")
 
@@ -218,7 +219,7 @@ class GSVDModel(nn.Module):
     def compile_gsvd_model(
         self,
         indices_dict: Optional[dict] = None,
-        verbose: bool = True
+        verbose: bool = False
     ):
         if indices_dict is None:
             indices_dict = self.indices_dict
