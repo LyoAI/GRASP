@@ -7,11 +7,13 @@ from typing import Literal, Optional, List, Union
 
 
 class GSVDLayer(nn.Module):
-    def __init__(self, U: torch.Tensor, S: torch.Tensor, Vh: torch.Tensor):
+    def __init__(self, U: torch.Tensor, S: torch.Tensor, Vh: torch.Tensor, bias: Optional[torch.Tensor]):
         super(GSVDLayer, self).__init__()
         self.U = nn.Parameter(U.clone().detach().requires_grad_(False))
         self.S = nn.Parameter(S.clone().detach().requires_grad_(True))
         self.Vh = nn.Parameter(Vh.clone().detach().requires_grad_(False))
+
+        self.bias = bias
 
     def forward(self, x: torch.Tensor):
         b, s, d = x.shape
@@ -39,8 +41,9 @@ class GSVDModel(nn.Module):
         module = self.model.get_submodule(target=target_layer)
         if module is not None:
             if isinstance(module, nn.Linear):
-                U, S, Vh = torch.linalg.svd(module.weight.data, full_matrices=False)
-                gsvd_layer = GSVDLayer(U=U, S=S, Vh=Vh)
+                U, S, Vh = torch.linalg.svd(module.weight.data.cuda(), full_matrices=False)
+                bias = module.bias
+                gsvd_layer = GSVDLayer(U=U, S=S, Vh=Vh, bias=bias)
                 self._set_module(self.model, target_layer, gsvd_layer)
                 replace_flag = True
             else:
@@ -186,7 +189,6 @@ class GSVDModel(nn.Module):
     def compile_gsvd_model(
         self,
         indices_dict: Optional[dict] = None,
-        merge: bool = True,
         verbose: bool = True
     ):
         if indices_dict is None:
@@ -200,16 +202,20 @@ class GSVDModel(nn.Module):
             S = gsvd_layer.S[indices]
             U = gsvd_layer.U[:, indices]
             Vh = gsvd_layer.Vh[indices, :]
+            bias = gsvd_layer.bias
 
             rank_dict[gsvd_layer_name] = S.shape[0]
 
-        if merge:
             in_features = Vh.shape[1]
             out_features = U.shape[0]
-            self._set_module(self.model, gsvd_layer_name, nn.Linear(in_features=in_features, out_features=out_features, bias=False))
+            self._set_module(self.model, gsvd_layer_name, nn.Linear(in_features=in_features, out_features=out_features, bias=True if bias is not None else False))
             linear_layer: nn.Linear = self.model.get_submodule(gsvd_layer_name)
+
+            # re-initialize linear weight and bias
             W_compressed = torch.mm(U, torch.mm(torch.diag(S), Vh))
             linear_layer.weight.data = W_compressed
+            if bias is not None:
+                linear_layer.bias = bias
 
         if verbose:
             print(f"Rank of layer after compression: \n{rank_dict}")
