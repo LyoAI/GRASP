@@ -67,7 +67,7 @@ class GSVDModel(nn.Module):
         if not target_layer_types:
             raise ValueError("Target layer types should be given, but got None")
         
-        print("=======Start Low- Rank Compressing transformer-based LLM blocks=====")
+        print("=======> Start Low-Rank Compressing transformer-based LLM blocks")
         
         for layer_id in layers_id:
             base_layer_name = f"model.layers.{layer_id}."
@@ -78,7 +78,7 @@ class GSVDModel(nn.Module):
         if verbose:
             print(self)
 
-        print("============================Done!==================================")
+        print("=======> Done!")
         
         return
 
@@ -125,6 +125,31 @@ class GSVDModel(nn.Module):
         self.gsvd_layer_grads = gsvd_layer_grads
 
         return gsvd_layer_grads
+    
+    def naive_svd_selection(
+        self,
+        compression_ratio: Optional[float] = None
+    ):
+        '''
+        **__naive svd selection__**:
+            For testing
+            It will be deprecated after testing on all benchmarks
+        '''
+        gsvd_layer_names = self.check_exists_gsvd_layer()
+        if not gsvd_layer_names:
+            raise NotImplementedError("please perform svd first")
+        
+        compression_ratio =  compression_ratio if compression_ratio is not None else 0.2
+        indices_dict = {}
+
+        for gsvd_layer_name in gsvd_layer_names:
+            gsvd_layer: GSVDLayer = self.model.get_submodule(gsvd_layer_name)
+            S = gsvd_layer.S
+            k = int(len(S) * (1-compression_ratio))
+            _, indices = torch.topk(S, k=k)
+            indices_dict[gsvd_layer_name] = indices
+
+        return indices_dict
 
     def dynamic_svd_selection(
             self,
