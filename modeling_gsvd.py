@@ -67,6 +67,8 @@ class GSVDModel(nn.Module):
         if not target_layer_types:
             raise ValueError("Target layer types should be given, but got None")
         
+        print("=======Start Low- Rank Compressing transformer-based LLM blocks=====")
+        
         for layer_id in layers_id:
             base_layer_name = f"model.layers.{layer_id}."
             target_layer_names = [base_layer_name + target_layer_type for target_layer_type in target_layer_types]
@@ -75,6 +77,8 @@ class GSVDModel(nn.Module):
         
         if verbose:
             print(self)
+
+        print("============================Done!==================================")
         
         return
 
@@ -126,8 +130,8 @@ class GSVDModel(nn.Module):
             self,
             gsvd_layer_grads: dict,
             mode: Literal["gradient", "taylor"] = "gradient",
-            gradient_threshold: float = 0.01,
-            taylor_threshold: float = 0.01,
+            gradient_threshold: Optional[float] = None,
+            taylor_threshold: Optional[float] = None,
             compression_ratio: Optional[float] = None
         ):
         if not gsvd_layer_grads:
