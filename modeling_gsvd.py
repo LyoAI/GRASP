@@ -99,7 +99,7 @@ class GSVDModel(nn.Module):
         if not gsvd_layer_names:
             raise NotImplementedError("GSVDLayer not found, can not compute gradients, please use GSVDModel.replace_with_GSVDLayer first")
 
-        iterator = tqdm(calibration_dataloader, total=len(calibration_dataloader), leave=True, colour="red")
+        iterator = tqdm(calibration_dataloader, desc="Gradients Collection", total=len(calibration_dataloader), leave=True)
         gsvd_layer_grads = {}
         for batch_idx, (inputs, labels) in enumerate(iterator):
             inputs = inputs.to(device=device)
@@ -250,5 +250,5 @@ class GSVDModel(nn.Module):
         if verbose:
             print(f"Rank of layer after compression: \n{rank_dict}")
 
-        print("Done!")
+        print("=======> Done!")
         return

@@ -28,7 +28,7 @@ def compress(
 
         # sort layer_id in a descending order
         layers_id.sort(reverse=True)
-        print("=======> Start Compressing model with GSVD")
+        print(f"=======> Start Compressing model with GSVD in a {mode} mode")
         for layer_id in tqdm(layers_id, desc="GSVD Compressing", total=len(layers_id), leave=True):
             # replace original linear layer with svd layer
             gsvd_model.compress_block(layers_id=layer_id, target_layer_types=target_layer_types, verbose=verbose)
@@ -48,7 +48,6 @@ def compress(
 
         # retain important singular values and compile gsvd model
         gsvd_model.compile_gsvd_model(indices_dict, verbose=verbose)
-        print("=======> Done!")
 
     elif mode == "parallel":
         print("=======> Start Compressing model with GSVD")
@@ -69,7 +68,6 @@ def compress(
 
         # retain important singular values and compile gsvd model
         gsvd_model.compile_gsvd_model(indices_dict, verbose=verbose)
-        print("=======> Done!")
     else:
         raise NotImplementedError(f"mode {mode} not support right now")
     
