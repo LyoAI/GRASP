@@ -24,8 +24,6 @@ def compress(
         if isinstance(layers_id, int):
             layers_id = [layers_id]
 
-        indices_dict = {}
-
         # sort layer_id in a descending order
         layers_id.sort(reverse=True)
         print(f"=======> Start Compressing model with GSVD in a {mode} mode")
@@ -37,17 +35,16 @@ def compress(
             gsvd_layer_grads = gsvd_model.get_svdlayer_gradients(calibration_dataloader, device)
 
             # gradient based or taylor based attribution
-            layer_indices_dict = gsvd_model.dynamic_svd_selection(
+            indices_dict = gsvd_model.dynamic_svd_selection(
                 gsvd_layer_grads,
                 metric=metric, 
                 gradient_threshold=gradient_threshold,
                 taylor_threshold=taylor_threshold,
                 compression_ratio=compression_ratio
             )
-            indices_dict.update(layer_indices_dict)
 
-        # retain important singular values and compile gsvd model
-        gsvd_model.compile_gsvd_model(indices_dict, verbose=verbose)
+            # retain important singular values and compile gsvd model
+            gsvd_model.compile_gsvd_model(indices_dict, verbose=verbose)
 
     elif mode == "parallel":
         print("=======> Start Compressing model with GSVD")

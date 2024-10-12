@@ -13,6 +13,9 @@ class GSVDLayer(nn.Module):
         self.S = nn.Parameter(S.clone().detach().requires_grad_(True))
         self.Vh = nn.Parameter(Vh.clone().detach().requires_grad_(False))
 
+        self.in_features = self.Vh.shape[1]
+        self.out_features = self.U.shape[0]
+
         self.bias = bias
 
     def forward(self, x: torch.Tensor):
@@ -82,6 +85,14 @@ class GSVDModel(nn.Module):
             print(self)
         
         return
+    
+    def compute_preserve_rank(self, gsvd_layer: GSVDLayer, compression_ratio: float):
+        if not compression_ratio:
+            raise ValueError("Compression ratio should not be None")
+        in_features = gsvd_layer.in_features
+        out_features = gsvd_layer.out_features
+        k = int(in_features * out_features * (1 - compression_ratio) / (in_features + out_features))
+        return k
 
     def check_exists_gsvd_layer(self):
         gsvd_layer_names = []
@@ -122,6 +133,9 @@ class GSVDModel(nn.Module):
                     gsvd_layer_grads[gsvd_layer_name] = module.S.grad
                 else:
                     gsvd_layer_grads[gsvd_layer_name] += module.S.grad
+            
+            if "cuda" in device:
+                torch.cuda.empty_cache()
 
         self.gsvd_layer_grads = gsvd_layer_grads
 
@@ -146,7 +160,7 @@ class GSVDModel(nn.Module):
         for gsvd_layer_name in gsvd_layer_names:
             gsvd_layer: GSVDLayer = self.model.get_submodule(gsvd_layer_name)
             S = gsvd_layer.S
-            k = int(len(S) * (1-compression_ratio))
+            k = self.compute_preserve_rank(gsvd_layer, compression_ratio=compression_ratio)
             _, indices = torch.topk(S, k=k)
             indices_dict[gsvd_layer_name] = indices
 
@@ -178,8 +192,9 @@ class GSVDModel(nn.Module):
 
             elif compression_ratio is not None:
                 for gsvd_layer_name, gsvd_layer_grad in gsvd_layer_grads.items():
+                    gsvd_layer: GSVDLayer = self.model.get_submodule(gsvd_layer_name)
                     svd_importance = torch.abs(gsvd_layer_grad)
-                    k = int(len(gsvd_layer_grad) * (1-compression_ratio))
+                    k = self.compute_preserve_rank(gsvd_layer, compression_ratio=compression_ratio)
                     _, indices = torch.topk(svd_importance, k=k)
                     indices_dict[gsvd_layer_name] = indices
 
@@ -202,8 +217,8 @@ class GSVDModel(nn.Module):
                 for gsvd_layer_name, gsvd_layer_grad in gsvd_layer_grads.items():
                     gsvd_layer: GSVDLayer = self.model.get_submodule(gsvd_layer_name)
                     S = gsvd_layer.S
-                    k = int(len(gsvd_layer_grad) * (1-compression_ratio))
-                    svd_importance = torch.abs(gsvd_layer_grad * svd_importance)
+                    k = self.compute_preserve_rank(gsvd_layer, compression_ratio=compression_ratio)
+                    svd_importance = torch.abs(gsvd_layer_grad * S)
                     _, indices = torch.topk(svd_importance, k=k)
                     indices_dict[gsvd_layer_name] = indices
 
@@ -244,8 +259,11 @@ class GSVDModel(nn.Module):
             # re-initialize linear weight and bias
             W_compressed = torch.mm(U, torch.mm(torch.diag(S), Vh))
             linear_layer.weight.data = W_compressed
+
             if bias is not None:
                 linear_layer.bias = bias
+            
+            linear_layer.requires_grad_(False)
 
         if verbose:
             print(f"Rank of layer after compression: \n{rank_dict}")
