@@ -15,6 +15,7 @@ def quick_test(model_name: str):
 
 def main_test(model_name: str):
     import gsvd
+    before_total_params = sum(p.numel() for p in model.parameters())
     gsvd_model = gsvd.compress(
         model=model,
         calibration_dataloader=calibration_dataloader,
@@ -23,8 +24,14 @@ def main_test(model_name: str):
         target_layer_types=["mlp.down_proj", "mlp.up_proj", "self_attn.q_proj", "self_attn.k_proj", "self_attn.v_proj"],
         compression_ratio=0.2,
         metric="taylor",
+        merge=False,
         verbose=True
     )
+    after_total_params = sum(p.numel() for p in gsvd_model.model.parameters())
+    print("Total Params before Compression: {}".format(before_total_params))
+    print("Total Params after Compression: {}".format(after_total_params))
+    print("="*100)
+    print("Compression ratio: {}".format(1 - after_total_params / before_total_params))
     result = evaluate_model(gsvd_model.model, tokenizer, model_name=model_name, tasks="", eval_ppl="wikitext2")
 
 def original_test(model_name: str):

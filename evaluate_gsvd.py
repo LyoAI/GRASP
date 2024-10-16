@@ -138,7 +138,7 @@ def evaluate_model(
         for dataset in eval_ppl.split(","):
             cache_testloader = f"/tmp/{dataset}_testloader_{model_name.replace('/', '_')}_all.cache"
             if os.path.exists(cache_testloader):
-                testloader = torch.load(cache_testloader)
+                testloader = torch.load(cache_testloader, weights_only=False)
                 print(f"load calibration from {cache_testloader}")
             else:
                 testloader = get_evaluation_dataloader(dataset, tokenizer)

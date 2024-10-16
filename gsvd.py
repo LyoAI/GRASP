@@ -16,6 +16,7 @@ def compress(
     taylor_threshold: Optional[float] = None,
     compression_ratio: Optional[float] = None,
     device: Literal["cuda:0", "cpu"] = "cuda:0",
+    merge: bool = True,
     verbose: bool  = False
 ):
     gsvd_model = GSVDModel(model=model)
@@ -44,7 +45,7 @@ def compress(
             )
 
             # retain important singular values and compile gsvd model
-            gsvd_model.compile_gsvd_model(indices_dict, verbose=verbose)
+            gsvd_model.compile_gsvd_model(indices_dict, merge=merge, verbose=verbose)
 
     elif mode == "parallel":
         print("=======> Start Compressing model with GSVD")
@@ -64,7 +65,7 @@ def compress(
         )
 
         # retain important singular values and compile gsvd model
-        gsvd_model.compile_gsvd_model(indices_dict, verbose=verbose)
+        gsvd_model.compile_gsvd_model(indices_dict, merge=merge, verbose=verbose)
     else:
         raise NotImplementedError(f"mode {mode} not support right now")
     
