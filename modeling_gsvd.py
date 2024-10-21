@@ -284,9 +284,12 @@ class GSVDModel(nn.Module):
         gsvd_layer_grads = {}
         self.model.to(device=device)
         for batch_idx, batch in enumerate(iterator):
+            if len(batch) == 2:
+                attention_mask = None
+            else:
+                attention_mask = batch["attention_mask"].to(device=device)
             input_ids = batch["input_ids"].to(device=device)
             labels = batch["labels"].to(device=device)
-            attention_mask = batch["attention_mask"].to(device=device)
             outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, labels=labels, use_cache=False)
             loss = outputs[0]
 
@@ -304,7 +307,7 @@ class GSVDModel(nn.Module):
                     gsvd_layer_grads[gsvd_layer_name] = module.S.grad
                 else:
                     gsvd_layer_grads[gsvd_layer_name] += module.S.grad
-            
+
             if "cuda" in device:
                 torch.cuda.empty_cache()
 
@@ -420,7 +423,7 @@ class GSVDModel(nn.Module):
                 svd_linear_layer.requires_grad_(False)
 
         if verbose:
-            print(f"Rank of layer after compression: \n{rank_dict}")
+            print(f"Model Architecture: {self.model}")
 
         print("=======> Done!")
         return
