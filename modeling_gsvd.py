@@ -1,6 +1,7 @@
 import os
 import re
 import torch
+import numpy as np
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from collections import defaultdict
@@ -46,7 +47,7 @@ class SVDLinear(nn.Module):
 
 
 class GSVDLayer(nn.Module):
-    def __init__(self, U: torch.Tensor, S: torch.Tensor, Vh: torch.Tensor, bias: Optional[torch.Tensor]):
+    def __init__(self, U: torch.Tensor, S: torch.Tensor, Vh: torch.Tensor, bias: Optional[torch.Tensor], compression_ratio: Optional[float]):
         super(GSVDLayer, self).__init__()
         self.U = nn.Parameter(U.clone().detach().requires_grad_(False))
         self.S = nn.Parameter(S.clone().detach().requires_grad_(True))
@@ -56,6 +57,7 @@ class GSVDLayer(nn.Module):
         self.out_features = self.U.shape[0]
 
         self.bias = bias
+        self.compression_ratio = compression_ratio
 
     def forward(self, x: torch.Tensor):
         b, s, d = x.shape
@@ -72,25 +74,46 @@ class GSVDModel(nn.Module):
             params.requires_grad = False
 
     def calculate_layer_compression_ratio(self, scores_info: dict, total_compression_ratio: float):
-        grouped_stats = defaultdict(lambda: {'total_taylor_scores': 0, 'count': 0})
+        grouped_stats = defaultdict(lambda: {'scores': []})
+
         for module_name, taylor_score in scores_info.items():
             match = re.search(r'self_attn\.(q_proj|k_proj|v_proj|o_proj)|mlp\.(gate_proj|up_proj|down_proj)', module_name)
             if match:
                 module_type_name = match.group(0)
-                grouped_stats[module_type_name]['total_taylor_scores'] += taylor_score
-                grouped_stats[module_type_name]['count'] += 1     
-        results = {module: {"Average_Taylor_Score": stats["total_taylor_scores"] / stats["counts"]} for module, stats in grouped_stats.items()}           
+                grouped_stats[module_type_name]['scores'].append(taylor_score)
+
+        results = {}
+        for module, stats in grouped_stats.items():
+            scores = stats['scores']
+            if len(scores) > 2:
+                scores.remove(max(scores))
+                scores.remove(min(scores))
+                average_taylor_score = sum(scores) / len(scores)
+            else:
+                average_taylor_score = sum(scores) / len(scores) if scores else 0
+            
+            results[module] = {"Average_Taylor_Score": average_taylor_score}
+
+        allocations_info = {}
+
         for module_name, module in self.model.named_modules():
             if isinstance(module, nn.Linear) and "lm_head" not in module_name:
                 match = re.search(r'self_attn\.(q_proj|k_proj|v_proj|o_proj)|mlp\.(gate_proj|up_proj|down_proj)', module_name)
                 if match:
                     module_type_name = match.group(0)
-                    module.compression_ratio = 1 - (1 - total_compression_ratio) * (scores_info[module_name] / results[module_type_name]["Average_Taylor_Score"])
+                    average_taylor_score = results[module_type_name]["Average_Taylor_Score"]
+                    module.compression_ratio = 1 - (1 - total_compression_ratio) * (scores_info[module_name] / average_taylor_score)
+
                 # scale to prevent bigger than 1 or smaller than 0
                 if module.compression_ratio <= 0:
-                    module.compression_ratio = 0
-                elif module.compression_ratio > 2 * total_compression_ratio:
-                    module.compression_ratio = 2 * total_compression_ratio
+                    module.compression_ratio = torch.tensor(0)
+                elif module.compression_ratio > 2 * total_compression_ratio and total_compression_ratio < 0.5:
+                    module.compression_ratio = torch.tensor(2 * total_compression_ratio)
+                elif module.compression_ratio > 2 * total_compression_ratio and total_compression_ratio > 0.5:
+                    module.compression_ratio = torch.tensor(0.8)
+
+                allocations_info[module_name] = module.compression_ratio
+        return allocations_info
         
     def compression_ratio_allocation(
             self,
@@ -102,7 +125,7 @@ class GSVDModel(nn.Module):
             verbose: bool = True,
             *args, **kwargs
         ):
-        print("=======>Compressing compression_ratio allocation within LLM")
+        print("=======>Compression_ratio allocation within LLM")
         model_id: str = self.model.config._name_or_path
         cache_file = f"./cache/{model_id.replace('/', '-')}_compression_ratio_scores_info.pt"
         # use cache
@@ -116,6 +139,8 @@ class GSVDModel(nn.Module):
             if verbose:
                 print("=" * 100)
                 print(f"gradient info distribution: {scores_info}")
+                print("=" * 100)
+                print(f"Compression ratio allocation: {allocations_info}")
             return allocations_info
         
         # calculate compression_ratio allocation
@@ -130,7 +155,7 @@ class GSVDModel(nn.Module):
             layer_collects[layer_name] = layer
 
         # Single GPU (not enough CUDA Memory)
-        for layer_name, layer in tqdm(layer_collects.items(), total=len(layer_collects), desc="Compression Ratio Allocation", leave=True):
+        for layer_id, (layer_name, layer) in enumerate(tqdm(layer_collects.items(), total=len(layer_collects), desc="Compression Ratio Allocation", leave=True)):
             layer.requires_grad_(True)
 
             iterator = tqdm(calibration_dataloader, desc=f"{layer_name}", total=len(calibration_dataloader), leave=True)
@@ -151,9 +176,9 @@ class GSVDModel(nn.Module):
                 for name, module in layer.named_modules():
                     if isinstance(module, nn.Linear):
                         if metric == "gradient":
-                            module.score_info += torch.norm(module.weight.grad.detach(), p='fro')
+                            module.score_info += torch.norm(module.weight.grad.detach(), p='fro') * np.log2(num_layers - layer_id + 1)
                         elif metric == "taylor":
-                            module.score_info += torch.norm(module.weight.grad.detach() * module.weight.data, p='fro')
+                            module.score_info += torch.norm(module.weight.grad.detach() * module.weight.data, p='fro') * np.log2(num_layers - layer_id + 1)
 
                 # clear gradients cache
                 self.model.zero_grad()
@@ -177,6 +202,8 @@ class GSVDModel(nn.Module):
         if verbose:
             print("=" * 100)
             print(f"gradient info distribution: {scores_info}")
+            print("=" * 100)
+            print(f"Compression ratio allocation: {allocations_info}")
         
         # Multi GPU still on progress
 
@@ -199,7 +226,8 @@ class GSVDModel(nn.Module):
                 else:
                     raise ValueError(f"device type {device} not support")
                 bias = module.bias
-                gsvd_layer = GSVDLayer(U=U, S=S, Vh=Vh, bias=bias)
+                compression_ratio = module.compression_ratio
+                gsvd_layer = GSVDLayer(U=U, S=S, Vh=Vh, bias=bias, compression_ratio=compression_ratio)
                 self._set_module(self.model, target_layer, gsvd_layer)
                 replace_flag = True
             else:
@@ -212,17 +240,17 @@ class GSVDModel(nn.Module):
             self,
             layer_id: int,
             block_type: Literal["attention", "mlp"],
-            target_layer_types: Union[List[str], str],
+            target_layer_types: Union[List[str], str] = ["q_proj", "k_proj", "v_proj", "o_proj", "down_proj", "up_proj", "gate_proj"],
             device: Literal["cuda", "cpu"] = "cuda",
             verbose: bool  = False
         ):
         '''
         Compress transformer-based LLM within a transformer block using GSVD
         '''
-        if not layer_id:
+        if layer_id is None:
             raise ValueError("Layer id should be given, but got None")
         
-        if not target_layer_types:
+        if target_layer_types is None:
             raise ValueError("Target layer types should be given, but got None")
 
         if block_type == "attention":
@@ -248,8 +276,18 @@ class GSVDModel(nn.Module):
         
         base_layer_name = f"model.layers.{layer_id}."
         target_layer_names = [base_layer_name + target_layer_type for target_layer_type in target_layer_types]
+
+        compression_ratio_list = []
         for target_layer in target_layer_names:
-            self.replace_with_GSVDLayer(target_layer=target_layer, device=device)
+            module = self.model.get_submodule(target_layer)
+            if isinstance(module, nn.Linear):
+                compression_ratio_list.append(module.compression_ratio.cpu().item())
+                if module.compression_ratio == 0:
+                    continue
+                else:
+                    self.replace_with_GSVDLayer(target_layer=target_layer, device=device)
+        if np.all(np.array(compression_ratio_list) == 0):
+            return True
         
         if verbose:
             print(self)
@@ -257,7 +295,7 @@ class GSVDModel(nn.Module):
         return
     
     def compute_preserve_rank(self, gsvd_layer: GSVDLayer, compression_ratio: float):
-        if not compression_ratio:
+        if compression_ratio is None:
             raise ValueError("Compression ratio should not be None")
         in_features = gsvd_layer.in_features
         out_features = gsvd_layer.out_features
@@ -277,7 +315,7 @@ class GSVDModel(nn.Module):
 
     def get_svdlayer_gradients(self, calibration_dataloader: DataLoader, device: Literal["cuda:0", "cpu"] = "cuda:0", *args, **kwargs):
         gsvd_layer_names = self.check_exists_gsvd_layer()
-        if not gsvd_layer_names:
+        if gsvd_layer_names is None:
             raise NotImplementedError("GSVDLayer not found, can not compute gradients, please use GSVDModel.replace_with_GSVDLayer first")
 
         iterator = tqdm(calibration_dataloader, desc="Gradients Collection", total=len(calibration_dataloader), leave=True)
@@ -353,27 +391,33 @@ class GSVDModel(nn.Module):
         indices_dict = {}
 
         if metric == "gradient":
-            if compression_ratio is not None:
-                for gsvd_layer_name, gsvd_layer_grad in gsvd_layer_grads.items():
-                    gsvd_layer: GSVDLayer = self.model.get_submodule(gsvd_layer_name)
-                    svd_importance = torch.abs(gsvd_layer_grad)
-                    k = self.compute_preserve_rank(gsvd_layer, compression_ratio=compression_ratio)
-                    _, indices = torch.topk(svd_importance, k=k)
-                    indices_dict[gsvd_layer_name] = indices
-            else:
-                raise NotImplementedError("set compression ratio")
+            for gsvd_layer_name, gsvd_layer_grad in gsvd_layer_grads.items():
+                gsvd_layer: GSVDLayer = self.model.get_submodule(gsvd_layer_name)
+                svd_importance = torch.abs(gsvd_layer_grad)
+
+                if gsvd_layer.compression_ratio is not None:
+                    compression_ratio = gsvd_layer.compression_ratio
+                if compression_ratio is None:
+                    raise NotImplementedError("set compression ratio")
+                
+                k = self.compute_preserve_rank(gsvd_layer, compression_ratio=compression_ratio)
+                _, indices = torch.topk(svd_importance, k=k)
+                indices_dict[gsvd_layer_name] = indices
 
         elif metric == "taylor":
-            if compression_ratio is not None:
-                for gsvd_layer_name, gsvd_layer_grad in gsvd_layer_grads.items():
-                    gsvd_layer: GSVDLayer = self.model.get_submodule(gsvd_layer_name)
-                    S = gsvd_layer.S
-                    k = self.compute_preserve_rank(gsvd_layer, compression_ratio=compression_ratio)
-                    svd_importance = torch.abs(gsvd_layer_grad * S)
-                    _, indices = torch.topk(svd_importance, k=k)
-                    indices_dict[gsvd_layer_name] = indices
-            else:
-                raise NotImplementedError("set gradient threshold or compression ratio")
+            for gsvd_layer_name, gsvd_layer_grad in gsvd_layer_grads.items():
+                gsvd_layer: GSVDLayer = self.model.get_submodule(gsvd_layer_name)
+                S = gsvd_layer.S
+
+                if gsvd_layer.compression_ratio is not None:
+                    compression_ratio = gsvd_layer.compression_ratio
+                if compression_ratio is None:
+                    raise NotImplementedError("set compression ratio")
+
+                k = self.compute_preserve_rank(gsvd_layer, compression_ratio=compression_ratio)
+                svd_importance = torch.abs(gsvd_layer_grad * S)
+                _, indices = torch.topk(svd_importance, k=k)
+                indices_dict[gsvd_layer_name] = indices
 
         else:
             raise RuntimeError(f"{metric} not support")
@@ -424,6 +468,4 @@ class GSVDModel(nn.Module):
 
         if verbose:
             print(f"Model Architecture: {self.model}")
-
-        print("=======> Done!")
         return
