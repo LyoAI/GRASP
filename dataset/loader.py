@@ -11,8 +11,8 @@ def get_calibration_dataloader(
     dataset_name: Literal["wikitext2", "ptb", "c4", 'boolq', 'openbookqa', 'arc_easy', 'arc_challenge', 'hellaswag', 'winogrande', 'piqa', 'mathqa'],
     tokenizer,
     num_samples: Optional[int] = 512,
-    seq_len: Optional[float] = 2048,
-    batch_size: Optional[int] = 4,
+    seq_len: Optional[float] = 512,
+    batch_size: Optional[int] = 1,
     seed: Optional[int] = 42  
 ):
     random.seed(seed)

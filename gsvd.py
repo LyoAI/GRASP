@@ -1,5 +1,5 @@
-import torch
 import os
+import torch
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 from typing import Union, Literal, Optional, List
@@ -17,7 +17,7 @@ def compress(
     device: Literal["cuda", "cpu"] = "cuda",
     save_path: Optional[str] = None,
     use_cache: bool = True,
-    merge: bool = True,
+    merge: bool = False,
     verbose: bool  = False
 ):
     gsvd_model = GSVDModel(model=model)
@@ -29,7 +29,7 @@ def compress(
         total_compression_ratio=0.2,
         calibration_dataloader=calibration_dataloader,
         metric="taylor",
-        device='cuda:0',
+        device=device,
         use_cache=use_cache,
         verbose=verbose
     )
@@ -67,11 +67,10 @@ def compress(
     
     print("=======> Done!")
     if save_path:
-        if os.path.exists(save_path):
-            torch.save(gsvd_model, save_path)
-        else:
-            if not os.path.exists("./checkpoint"):
-                os.makedirs("./checkpoint")
-            model_id: str = gsvd_model.model.config._name_or_path
-            torch.save(gsvd_model, os.path.join("./checkpoint", f"{model_id.replace('/', '-')}.pth"))
+        torch.save(gsvd_model, save_path)
+    else:
+        if not os.path.exists("./checkpoint"):
+            os.makedirs("./checkpoint")
+        model_id: str = gsvd_model.model.config._name_or_path
+        torch.save(gsvd_model, os.path.join("./checkpoint", f"{model_id.replace('/', '-')}.pth"))
     return gsvd_model
