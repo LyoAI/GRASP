@@ -76,26 +76,41 @@ class GSVDModel(nn.Module):
     def calculate_layer_compression_ratio(self, scores_info: dict, total_compression_ratio: float):
         grouped_stats = defaultdict(lambda: {'scores': []})
 
+        # Collect Taylor scores for each module
         for module_name, taylor_score in scores_info.items():
             match = re.search(r'self_attn\.(q_proj|k_proj|v_proj|o_proj)|mlp\.(gate_proj|up_proj|down_proj)', module_name)
             if match:
                 module_type_name = match.group(0)
-                grouped_stats[module_type_name]['scores'].append(taylor_score)
+                grouped_stats[module_type_name]['scores'].append(taylor_score.cpu())
 
         results = {}
+
+        # Define a function to remove outliers using IQR
+        def remove_outliers_using_iqr(scores):
+            scores = np.array(scores)
+            q1 = np.percentile(scores, 25)  # 1st quartile
+            q3 = np.percentile(scores, 75)  # 3rd quartile
+            iqr = q3 - q1  # Interquartile Range (IQR)
+            lower_bound = q1 - 1.5 * iqr
+            upper_bound = q3 + 1.5 * iqr
+            # Filter scores within the IQR bounds
+            filtered_scores = [score for score in scores if lower_bound <= score <= upper_bound]
+            return filtered_scores
+
+        # Apply IQR to remove outliers for each module's Taylor scores
         for module, stats in grouped_stats.items():
             scores = stats['scores']
-            if len(scores) > 2:
-                scores.remove(max(scores))
-                scores.remove(min(scores))
-                average_taylor_score = sum(scores) / len(scores)
+            if len(scores) > 2:  # Ensure enough data for IQR calculation
+                filtered_scores = remove_outliers_using_iqr(scores)
+                average_taylor_score = sum(filtered_scores) / len(filtered_scores) if filtered_scores else 0
             else:
                 average_taylor_score = sum(scores) / len(scores) if scores else 0
-            
+
             results[module] = {"Average_Taylor_Score": average_taylor_score}
 
         allocations_info = {}
 
+        # Calculate compression ratio for each module
         for module_name, module in self.model.named_modules():
             if isinstance(module, nn.Linear) and "lm_head" not in module_name:
                 match = re.search(r'self_attn\.(q_proj|k_proj|v_proj|o_proj)|mlp\.(gate_proj|up_proj|down_proj)', module_name)
@@ -104,7 +119,7 @@ class GSVDModel(nn.Module):
                     average_taylor_score = results[module_type_name]["Average_Taylor_Score"]
                     module.compression_ratio = 1 - (1 - total_compression_ratio) * (scores_info[module_name] / average_taylor_score)
 
-                # scale to prevent bigger than 1 or smaller than 0
+                # Scale compression ratio to prevent it from exceeding bounds
                 if module.compression_ratio <= 0:
                     module.compression_ratio = torch.tensor(0)
                 elif module.compression_ratio > 2 * total_compression_ratio and total_compression_ratio < 0.5:
@@ -281,8 +296,9 @@ class GSVDModel(nn.Module):
         for target_layer in target_layer_names:
             module = self.model.get_submodule(target_layer)
             if isinstance(module, nn.Linear):
-                compression_ratio_list.append(module.compression_ratio.cpu().item())
-                if module.compression_ratio == 0:
+                compression_ratio = module.compression_ratio.cpu().item()
+                compression_ratio_list.append(compression_ratio)
+                if compression_ratio == 0:
                     continue
                 else:
                     self.replace_with_GSVDLayer(target_layer=target_layer, device=device)
@@ -429,8 +445,7 @@ class GSVDModel(nn.Module):
         self,
         indices_dict: Optional[dict] = None,
         merge: Optional[bool] = True,
-        sigma_fuse: Literal["UV", "U", "V"] = "UV",
-        verbose: bool = False
+        sigma_fuse: Literal["UV", "U", "V"] = "UV"
     ):
         if indices_dict is None:
             indices_dict = self.indices_dict
@@ -465,7 +480,4 @@ class GSVDModel(nn.Module):
                 self._set_module(self.model, gsvd_layer_name, SVDLinear(U=U, S=S, Vh=Vh, bias=bias, sigma_fuse=sigma_fuse))
                 svd_linear_layer: SVDLinear = self.model.get_submodule(gsvd_layer_name)
                 svd_linear_layer.requires_grad_(False)
-
-        if verbose:
-            print(f"Model Architecture: {self.model}")
         return

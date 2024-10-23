@@ -1,3 +1,5 @@
+import torch
+import os
 from tqdm import tqdm
 from torch.utils.data import DataLoader
 from typing import Union, Literal, Optional, List
@@ -13,6 +15,7 @@ def compress(
     metric: Literal["gradient", "taylor"] = "taylor",
     compression_ratio: Optional[float] = None,
     device: Literal["cuda", "cpu"] = "cuda",
+    save_path: Optional[str] = None,
     use_cache: bool = True,
     merge: bool = True,
     verbose: bool  = False
@@ -30,6 +33,7 @@ def compress(
         use_cache=use_cache,
         verbose=verbose
     )
+    print(allocations_info)
 
     # sort layer_id in a descending order
     layers_id.sort(reverse=True)
@@ -44,9 +48,9 @@ def compress(
                 metric=metric, 
                 compression_ratio=compression_ratio
             ) # gradient based or taylor based attribution
-            gsvd_model.compile_gsvd_model(indices_dict, verbose=verbose, merge=merge) # retain important singular values and compile gsvd model
+            gsvd_model.compile_gsvd_model(indices_dict, merge=merge) # retain important singular values and compile gsvd model
         else:
-            print("Skip Compressing This Block due to all compression ratio equals to 0")
+            print("=======> Skip Compressing This Block due to all compression ratio equals to 0")
 
         # Attention Block
         skip_flag = gsvd_model.compress_block(layer_id=layer_id, block_type="attention", target_layer_types=attn_target_layer_types, verbose=verbose) # replace original linear layer with svd layer
@@ -57,8 +61,17 @@ def compress(
                 metric=metric, 
                 compression_ratio=compression_ratio
             ) # gradient based or taylor based attribution
-            gsvd_model.compile_gsvd_model(indices_dict, verbose=verbose, merge=merge) # retain important singular values and compile gsvd model
+            gsvd_model.compile_gsvd_model(indices_dict, merge=merge) # retain important singular values and compile gsvd model
         else:
-            print("Skip Compressing This Block due to all compression ratio equals to 0")
+            print("=======> Skip Compressing This Block due to all compression ratio equals to 0")
+    
     print("=======> Done!")
+    if save_path:
+        if os.path.exists(save_path):
+            torch.save(gsvd_model, save_path)
+        else:
+            if not os.path.exists("./checkpoint"):
+                os.makedirs("./checkpoint")
+            model_id: str = gsvd_model.model.config._name_or_path
+            torch.save(gsvd_model, os.path.join("./checkpoint", f"{model_id.replace('/', '-')}.pth"))
     return gsvd_model
