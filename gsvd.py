@@ -40,7 +40,7 @@ def compress(
     print(f"=======> Start Compressing model with GSVD")
     for layer_id in tqdm(layers_id, desc="GSVD Compressing", total=len(layers_id), leave=True):
         # MLP Block
-        skip_flag = gsvd_model.compress_block(layer_id=layer_id, block_type="mlp", target_layer_types=mlp_target_layer_types, verbose=verbose) # replace original linear layer with svd layer
+        skip_flag = gsvd_model.compress_block(layer_id=layer_id, block_type="mlp", target_layer_types=mlp_target_layer_types, verbose=verbose, device=device) # replace original linear layer with svd layer
         if not skip_flag:
             gsvd_layer_grads = gsvd_model.get_svdlayer_gradients(calibration_dataloader, device) # calculate gradients for each singular values 
             indices_dict = gsvd_model.dynamic_svd_selection(
@@ -48,12 +48,12 @@ def compress(
                 metric=metric, 
                 compression_ratio=compression_ratio
             ) # gradient based or taylor based attribution
-            gsvd_model.compile_gsvd_model(indices_dict, merge=merge) # retain important singular values and compile gsvd model
+            gsvd_model.compile_gsvd_model(indices_dict, merge=merge, device=device) # retain important singular values and compile gsvd model
         else:
             print("=======> Skip Compressing This Block due to all compression ratio equals to 0")
 
         # Attention Block
-        skip_flag = gsvd_model.compress_block(layer_id=layer_id, block_type="attention", target_layer_types=attn_target_layer_types, verbose=verbose) # replace original linear layer with svd layer
+        skip_flag = gsvd_model.compress_block(layer_id=layer_id, block_type="attention", target_layer_types=attn_target_layer_types, verbose=verbose, device=device) # replace original linear layer with svd layer
         if not skip_flag:
             gsvd_layer_grads = gsvd_model.get_svdlayer_gradients(calibration_dataloader, device) # calculate gradients for each singular values 
             indices_dict = gsvd_model.dynamic_svd_selection(
@@ -61,7 +61,7 @@ def compress(
                 metric=metric, 
                 compression_ratio=compression_ratio
             ) # gradient based or taylor based attribution
-            gsvd_model.compile_gsvd_model(indices_dict, merge=merge) # retain important singular values and compile gsvd model
+            gsvd_model.compile_gsvd_model(indices_dict, merge=merge, device=device) # retain important singular values and compile gsvd model
         else:
             print("=======> Skip Compressing This Block due to all compression ratio equals to 0")
     

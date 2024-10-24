@@ -145,7 +145,7 @@ class GSVDModel(nn.Module):
         cache_file = f"./cache/{model_id.replace('/', '-')}_compression_ratio_scores_info.pt"
         # use cache
         if os.path.exists(cache_file) and use_cache:
-            scores_info = torch.load(cache_file, map_location="cpu")
+            scores_info = torch.load(cache_file, map_location="cpu", weights_only=False)
             for name, module in self.model.named_modules():
                 if isinstance(module, nn.Linear) and "lm_head" not in name:
                     module.score_info = scores_info[name].to(module.weight.device)
@@ -445,7 +445,8 @@ class GSVDModel(nn.Module):
         self,
         indices_dict: Optional[dict] = None,
         merge: Optional[bool] = True,
-        sigma_fuse: Literal["UV", "U", "V"] = "UV"
+        sigma_fuse: Literal["UV", "U", "V"] = "UV",
+        device: Literal["cpu", "cuda"] = "cuda"
     ):
         if indices_dict is None:
             indices_dict = self.indices_dict
@@ -480,4 +481,8 @@ class GSVDModel(nn.Module):
                 self._set_module(self.model, gsvd_layer_name, SVDLinear(U=U, S=S, Vh=Vh, bias=bias, sigma_fuse=sigma_fuse))
                 svd_linear_layer: SVDLinear = self.model.get_submodule(gsvd_layer_name)
                 svd_linear_layer.requires_grad_(False)
+            
+            del gsvd_layer
+            if "cuda" in device:
+                torch.cuda.empty_cache()
         return
