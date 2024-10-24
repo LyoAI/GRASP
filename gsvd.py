@@ -9,6 +9,7 @@ from modeling_gsvd import GSVDModel
 def compress(
     model,
     calibration_dataloader: DataLoader,
+    dataset_name: Optional[str] = None,
     layers_id: Optional[Union[List[int], int]] = None,
     act_aware: bool =True,
     alpha: float = 1,
@@ -23,6 +24,7 @@ def compress(
     verbose: bool  = False
 ):
     gsvd_model = GSVDModel(model=model)
+    gsvd_model.model.to(device=device)
     if isinstance(layers_id, int):
         layers_id = [layers_id]
     
@@ -41,6 +43,7 @@ def compress(
     if act_aware:
         gsvd_model.compute_scaling_matrix(
             calibration_dataloader=calibration_dataloader,
+            dataset_name=dataset_name,
             device=device,
             use_cache=use_cache
         )

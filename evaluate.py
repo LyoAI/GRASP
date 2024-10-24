@@ -1,15 +1,15 @@
 from typing import Optional
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from evaluate_gsvd import evaluate_model
-from modeling_gsvd import GSVDModel
 from dataset.loader import get_calibration_dataloader
 
 
-def main_test(model_name: str, device: str, compression_ratio: float, save_path: Optional[str] = None):
+def main_test(model_name: str, dataset_name: str, device: str, compression_ratio: float, save_path: Optional[str] = None):
     import gsvd
     gsvd_model = gsvd.compress(
         model=model,
         calibration_dataloader=calibration_dataloader,
+        dataset_name=dataset_name,
         layers_id=[i for i in range(32)],
         act_aware= True,
         alpha = 1,
@@ -38,8 +38,9 @@ if __name__ == "__main__":
     # tokenizer = AutoTokenizer.from_pretrained('Qwen/Qwen2.5-0.5B-Instruct')
 
     calibration_dataloader = get_calibration_dataloader(dataset_name="wikitext2", tokenizer=tokenizer, num_samples=512, batch_size=1, seq_len=2048)
+    dataset_name = "wikitext2"
 
-    main_test(model_name="llama", device="cuda:0", compression_ratio=0.2, save_path="./checkpoint/llama_0.2.pth")
+    main_test(model_name="llama", dataset_name=dataset_name, device="cuda:1", compression_ratio=0.2)
 
     # import torch
     # gsvd_model = torch.load("./checkpoint/llama2_7b_hellaswag_0.2.pth", weights_only=False)

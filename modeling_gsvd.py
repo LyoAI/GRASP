@@ -225,19 +225,20 @@ class GSVDModel(nn.Module):
     def compute_scaling_matrix(
             self,
             calibration_dataloader: DataLoader,
+            dataset_name: Optional[str] = None,
             device: Literal["cuda", "cpu"] = "cuda",
-            use_cache: bool = True,
+            use_cache: bool = False,
             *args, **kwargs
         ):
         print(f"=======>Compute Module Scaling Matrix (using cache {use_cache})")
         model_id: str = self.model.config._name_or_path
-        cache_file = f"./cache/{model_id.replace('/', '-')}_scaling_matrix_dict.pt"
+        cache_file = f"./cache/{model_id.replace('/', '-')}_{dataset_name}_scaling_matrix_dict.pt"
         # use cache
         if os.path.exists(cache_file) and use_cache:
-            scaling_matrix_dict = torch.load(cache_file, map_location="cpu", weights_only=False)
+            scaling_matrix_dict = torch.load(cache_file, map_location=device, weights_only=False)
             for name, module in self.model.named_modules():
                 if isinstance(module, nn.Linear) and "lm_head" not in name:
-                    module.scaling_diag_matrix = scaling_matrix_dict[name].to(module.weight.device)
+                    module.scaling_diag_matrix = scaling_matrix_dict[name].to(device)
             return
         
         def hook(module, input: torch.Tensor, output):
