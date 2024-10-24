@@ -222,6 +222,55 @@ class GSVDModel(nn.Module):
         
         # Multi GPU still on progress
 
+    def compute_scaling_matrix(
+            self,
+            calibration_dataloader: DataLoader,
+            device: Literal["cuda", "cpu"] = "cuda",
+            use_cache: bool = True,
+            *args, **kwargs
+        ):
+        print(f"=======>Compute Module Scaling Matrix (using cache {use_cache})")
+        model_id: str = self.model.config._name_or_path
+        cache_file = f"./cache/{model_id.replace('/', '-')}_scaling_matrix_dict.pt"
+        # use cache
+        if os.path.exists(cache_file) and use_cache:
+            scaling_matrix_dict = torch.load(cache_file, map_location="cpu", weights_only=False)
+            for name, module in self.model.named_modules():
+                if isinstance(module, nn.Linear) and "lm_head" not in name:
+                    module.scaling_diag_matrix = scaling_matrix_dict[name].to(module.weight.device)
+            return
+        
+        def hook(module, input: torch.Tensor, output):
+            input_channel_wise_mean = input[0].abs().mean(dim=-2).detach().view(-1)
+            module.scaling_diag_matrix += input_channel_wise_mean
+
+        for name, module in self.model.named_modules():
+            if isinstance(module, nn.Linear) and "lm_head" not in name:
+                module.scaling_diag_matrix = 0
+                module.register_forward_hook(hook)
+            
+        # get activation distribution as ASVD on calibration dataloader
+        iterator = tqdm(calibration_dataloader, desc="Activation Distribution", total=len(calibration_dataloader), leave=True)
+        self.model.to(device=device)
+        for batch in iterator:
+            if len(batch) == 2:
+                attention_mask = None
+            else:
+                attention_mask = batch["attention_mask"].to(device)
+            input_ids = batch["input_ids"].to(device)
+            labels = batch["labels"].to(device)
+            
+            self.model(input_ids=input_ids, attention_mask=attention_mask, labels=labels, use_cache=False)
+        
+        scaling_matrix_dict = {}
+        for name, module in self.model.named_modules():
+            if isinstance(module, nn.Linear) and "lm_head" not in name:
+                module._forward_hooks.clear()
+                scaling_matrix_dict[name] = module.scaling_diag_matrix
+        torch.save(scaling_matrix_dict, cache_file)
+    
+        return
+
     def _set_module(self, model, submodule_key, module):
         tokens = submodule_key.split('.')
         sub_model = model
@@ -229,24 +278,30 @@ class GSVDModel(nn.Module):
             sub_model = getattr(sub_model, token)
         setattr(sub_model, tokens[-1], module)
 
-    def replace_with_GSVDLayer(self, target_layer: str, device: Literal["cuda", "cpu"] = "cuda"):
+    def replace_with_GSVDLayer(self, target_layer: str, device: Literal["cuda", "cpu"] = "cuda", act_aware: bool =True, alpha: float = 1):
         replace_flag = False
         module = self.model.get_submodule(target=target_layer)
-        if module is not None:
-            if isinstance(module, nn.Linear):
-                if "cuda" in device:
-                    U, S, Vh = torch.linalg.svd(module.weight.data.cuda(), full_matrices=False)
-                elif "cpu" in device:
-                    U, S, Vh = torch.linalg.svd(module.weight.data, full_matrices=False)
-                else:
-                    raise ValueError(f"device type {device} not support")
-                bias = module.bias
-                compression_ratio = module.compression_ratio
-                gsvd_layer = GSVDLayer(U=U, S=S, Vh=Vh, bias=bias, compression_ratio=compression_ratio)
-                self._set_module(self.model, target_layer, gsvd_layer)
-                replace_flag = True
-            else:
-                raise TypeError(f"target layer should be of Linear module, but got {type(module)}")
+        if isinstance(module, nn.Linear):
+            w = module.weight.data
+
+            if act_aware:
+                scaling_diag_matrix = torch.ones_like(w) # avoid zero division
+                if hasattr(module, "scaling_diag_matrix"):
+                    scaling_diag_matrix = module.scaling_diag_matrix ** alpha
+                scaling_diag_matrix += 1e-6 # avoid zero division
+                w = w * scaling_diag_matrix.view(1, -1)
+
+            U, S, Vh = torch.linalg.svd(w.to(device=device), full_matrices=False)
+            if act_aware:
+                Vh = Vh / scaling_diag_matrix.to(device=device)
+
+            bias = module.bias
+            compression_ratio = module.compression_ratio
+            gsvd_layer = GSVDLayer(U=U, S=S, Vh=Vh, bias=bias, compression_ratio=compression_ratio)
+            self._set_module(self.model, target_layer, gsvd_layer)
+            replace_flag = True
+        else:
+            raise TypeError(f"target layer should be of Linear module, but got {type(module)}")
         if not replace_flag:
             print(f"failed to replace with GSVDLayer, target layer: {target_layer} not found in model")
             return
@@ -256,6 +311,8 @@ class GSVDModel(nn.Module):
             layer_id: int,
             block_type: Literal["attention", "mlp"],
             target_layer_types: Union[List[str], str] = ["q_proj", "k_proj", "v_proj", "o_proj", "down_proj", "up_proj", "gate_proj"],
+            act_aware: bool =True,
+            alpha: float = 1,
             device: Literal["cuda", "cpu"] = "cuda",
             verbose: bool  = False
         ):
@@ -301,7 +358,7 @@ class GSVDModel(nn.Module):
                 if compression_ratio == 0:
                     continue
                 else:
-                    self.replace_with_GSVDLayer(target_layer=target_layer, device=device)
+                    self.replace_with_GSVDLayer(target_layer=target_layer, device=device, act_aware=act_aware, alpha=alpha)
         if np.all(np.array(compression_ratio_list) == 0):
             return True
         

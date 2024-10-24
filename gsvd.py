@@ -10,6 +10,8 @@ def compress(
     model,
     calibration_dataloader: DataLoader,
     layers_id: Optional[Union[List[int], int]] = None,
+    act_aware: bool =True,
+    alpha: float = 1,
     mlp_target_layer_types: Union[List[str], str] = ["down_proj", "up_proj", "gate_proj"],
     attn_target_layer_types: Union[List[str], str] = ["q_proj", "k_proj", "v_proj", "o_proj"],
     metric: Literal["gradient", "taylor"] = "taylor",
@@ -35,12 +37,28 @@ def compress(
     )
     print(allocations_info)
 
+    # compute scaling_matrix if activation aware
+    if act_aware:
+        gsvd_model.compute_scaling_matrix(
+            calibration_dataloader=calibration_dataloader,
+            device=device,
+            use_cache=use_cache
+        )
+
     # sort layer_id in a descending order
     layers_id.sort(reverse=True)
     print(f"=======> Start Compressing model with GSVD")
     for layer_id in tqdm(layers_id, desc="GSVD Compressing", total=len(layers_id), leave=True):
         # MLP Block
-        skip_flag = gsvd_model.compress_block(layer_id=layer_id, block_type="mlp", target_layer_types=mlp_target_layer_types, verbose=verbose, device=device) # replace original linear layer with svd layer
+        skip_flag = gsvd_model.compress_block(
+            layer_id=layer_id,
+            block_type="mlp",
+            target_layer_types=mlp_target_layer_types, 
+            verbose=verbose, 
+            device=device,
+            act_aware=act_aware,
+            alpha=alpha
+        ) # replace original linear layer with svd layer
         if not skip_flag:
             gsvd_layer_grads = gsvd_model.get_svdlayer_gradients(calibration_dataloader, device) # calculate gradients for each singular values 
             indices_dict = gsvd_model.dynamic_svd_selection(
@@ -53,7 +71,15 @@ def compress(
             print("=======> Skip Compressing This Block due to all compression ratio equals to 0")
 
         # Attention Block
-        skip_flag = gsvd_model.compress_block(layer_id=layer_id, block_type="attention", target_layer_types=attn_target_layer_types, verbose=verbose, device=device) # replace original linear layer with svd layer
+        skip_flag = gsvd_model.compress_block(
+            layer_id=layer_id, 
+            block_type="attention", 
+            target_layer_types=attn_target_layer_types, 
+            verbose=verbose, 
+            device=device,
+            act_aware=act_aware,
+            alpha=alpha
+        ) # replace original linear layer with svd layer
         if not skip_flag:
             gsvd_layer_grads = gsvd_model.get_svdlayer_gradients(calibration_dataloader, device) # calculate gradients for each singular values 
             indices_dict = gsvd_model.dynamic_svd_selection(

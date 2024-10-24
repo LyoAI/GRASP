@@ -10,7 +10,9 @@ def main_test(model_name: str, device: str, compression_ratio: float, save_path:
     gsvd_model = gsvd.compress(
         model=model,
         calibration_dataloader=calibration_dataloader,
-        layers_id=[i for i in range(4, 32)],
+        layers_id=[i for i in range(32)],
+        act_aware= True,
+        alpha = 1,
         mlp_target_layer_types = ["down_proj", "up_proj", "gate_proj"],
         attn_target_layer_types = ["q_proj", "k_proj", "v_proj", "o_proj"],
         compression_ratio=compression_ratio,
@@ -37,7 +39,7 @@ if __name__ == "__main__":
 
     calibration_dataloader = get_calibration_dataloader(dataset_name="wikitext2", tokenizer=tokenizer, num_samples=512, batch_size=1, seq_len=2048)
 
-    main_test(model_name="llama", device="cuda:0", compression_ratio=0.2, save_path="./checkpoint/llama_wikitext2_0.2")
+    main_test(model_name="llama", device="cuda:0", compression_ratio=0.2, save_path="./checkpoint/llama_0.2.pth")
 
     # import torch
     # gsvd_model = torch.load("./checkpoint/llama2_7b_hellaswag_0.2.pth", weights_only=False)
