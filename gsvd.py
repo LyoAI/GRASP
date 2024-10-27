@@ -12,6 +12,7 @@ def compress(
     dataset_name: Optional[str] = None,
     layers_id: Optional[Union[List[int], int]] = None,
     act_aware: bool =True,
+    allocation_aware: bool = True,
     alpha: float = 1,
     mlp_target_layer_types: Union[List[str], str] = ["down_proj", "up_proj", "gate_proj"],
     attn_target_layer_types: Union[List[str], str] = ["q_proj", "k_proj", "v_proj", "o_proj"],
@@ -25,27 +26,31 @@ def compress(
 ):
     gsvd_model = GSVDModel(model=model)
     gsvd_model.model.to(device=device)
+
+    if layers_id is None:
+        layers_id = [i for i in range(len(gsvd_model.model.layers))]
+
     if isinstance(layers_id, int):
         layers_id = [layers_id]
     
-    print(f"=======> Start Compression ratio allocation with GSVD")
-    allocations_info = gsvd_model.compression_ratio_allocation(
-        total_compression_ratio=0.2,
-        calibration_dataloader=calibration_dataloader,
-        metric="taylor",
-        device=device,
-        use_cache=use_cache,
-        verbose=verbose
-    )
-    print(allocations_info)
+    if allocation_aware:
+        print(f"=======> Start Compression ratio allocation with GSVD")
+        allocations_info = gsvd_model.compression_ratio_allocation(
+            total_compression_ratio=compression_ratio,
+            calibration_dataloader=calibration_dataloader,
+            metric="taylor",
+            device=device,
+            use_cache=use_cache,
+            verbose=verbose
+        )
+        print(allocations_info)
 
     # compute scaling_matrix if activation aware
     if act_aware:
         gsvd_model.compute_scaling_matrix(
             calibration_dataloader=calibration_dataloader,
             dataset_name=dataset_name,
-            device=device,
-            use_cache=use_cache
+            device=device
         )
 
     # sort layer_id in a descending order
@@ -60,6 +65,7 @@ def compress(
             verbose=verbose, 
             device=device,
             act_aware=act_aware,
+            allocation_aware=allocation_aware,
             alpha=alpha
         ) # replace original linear layer with svd layer
         if not skip_flag:
@@ -81,6 +87,7 @@ def compress(
             verbose=verbose, 
             device=device,
             act_aware=act_aware,
+            allocation_aware=allocation_aware,
             alpha=alpha
         ) # replace original linear layer with svd layer
         if not skip_flag:

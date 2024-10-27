@@ -297,7 +297,7 @@ class GSVDModel(nn.Module):
                 Vh = Vh / scaling_diag_matrix.to(device=device)
 
             bias = module.bias
-            compression_ratio = module.compression_ratio
+            compression_ratio = getattr(module, "compression_ratio", None)
             gsvd_layer = GSVDLayer(U=U, S=S, Vh=Vh, bias=bias, compression_ratio=compression_ratio)
             self._set_module(self.model, target_layer, gsvd_layer)
             replace_flag = True
@@ -312,7 +312,8 @@ class GSVDModel(nn.Module):
             layer_id: int,
             block_type: Literal["attention", "mlp"],
             target_layer_types: Union[List[str], str] = ["q_proj", "k_proj", "v_proj", "o_proj", "down_proj", "up_proj", "gate_proj"],
-            act_aware: bool =True,
+            act_aware: bool = True,
+            allocation_aware: bool = True, 
             alpha: float = 1,
             device: Literal["cuda", "cpu"] = "cuda",
             verbose: bool  = False
@@ -350,18 +351,23 @@ class GSVDModel(nn.Module):
         base_layer_name = f"model.layers.{layer_id}."
         target_layer_names = [base_layer_name + target_layer_type for target_layer_type in target_layer_types]
 
-        compression_ratio_list = []
-        for target_layer in target_layer_names:
-            module = self.model.get_submodule(target_layer)
-            if isinstance(module, nn.Linear):
-                compression_ratio = module.compression_ratio.cpu().item()
-                compression_ratio_list.append(compression_ratio)
-                if compression_ratio == 0:
-                    continue
-                else:
-                    self.replace_with_GSVDLayer(target_layer=target_layer, device=device, act_aware=act_aware, alpha=alpha)
-        if np.all(np.array(compression_ratio_list) == 0):
-            return True
+        if allocation_aware:
+            compression_ratio_list = []
+            for target_layer in target_layer_names:
+                module = self.model.get_submodule(target_layer)
+                if isinstance(module, nn.Linear):
+                    compression_ratio = module.compression_ratio.cpu().item()
+                    compression_ratio_list.append(compression_ratio)
+                    if compression_ratio == 0:
+                        continue
+                    else:
+                        self.replace_with_GSVDLayer(target_layer=target_layer, device=device, act_aware=act_aware, alpha=alpha)
+            if np.all(np.array(compression_ratio_list) == 0):
+                return True
+        else:
+            for target_layer in target_layer_names:
+                self.replace_with_GSVDLayer(target_layer=target_layer, device=device, act_aware=act_aware, alpha=alpha)
+
         
         if verbose:
             print(self)
