@@ -5,23 +5,24 @@ from evaluate_gsvd import evaluate_model
 from dataset.loader import get_calibration_dataloader
 
 
-def main_test(model_name: str, dataset_name: str, device: str, compression_ratio: float, save_path: Optional[str] = None):
+def main_test(model_name: str, device: str, compression_ratio: Optional[float]=None, threshold_ratio: Optional[float] = None, save_path: Optional[str] = None):
     import gsvd
     gsvd_model = gsvd.compress(
         model=model,
         calibration_dataloader=calibration_dataloader,
         layers_id=None,
         num_prune_layers=9,
-        allocation_aware=False,
         mlp_target_layer_types = ["down_proj", "up_proj", "gate_proj"], # ["down_proj", "up_proj", "gate_proj"]
         attn_target_layer_types = ["q_proj", "k_proj", "v_proj", "o_proj"],
         compression_ratio=compression_ratio,
+        threshold_ratio=threshold_ratio,
         metric="taylor",
         device=device,
         angular=False,
         use_cache=True,
         merge=False,
         verbose=False,
+        allocation_aware=False,
         save_path=save_path
     )
     torch.save(gsvd_model.gsvd_values_dict, "./cache/gsvd_values_dict.pt")
@@ -39,4 +40,4 @@ if __name__ == "__main__":
     calibration_dataloader = get_calibration_dataloader(dataset_name="wikitext2", tokenizer=tokenizer, num_samples=512, batch_size=1, seq_len=2048)
     dataset_name = "wikitext2"
 
-    main_test(model_name="llama", dataset_name=dataset_name, device="cuda:0", compression_ratio=0.8)
+    main_test(model_name="llama", device="cuda:0", compression_ratio=None, threshold_ratio=0.6)

@@ -1,14 +1,10 @@
-import os
-import re
-import json
 import torch
 import numpy as np
 import torch.nn as nn
 from torch.utils.data import DataLoader
-from collections import defaultdict
 from tqdm import tqdm
 from typing import Literal, Optional, List, Union
-from tools.utils_func import block_influence
+from tools.utils_func import block_influence, adaptive_rank_selection
 
 
 class SVDLinear(nn.Module):
@@ -76,155 +72,15 @@ class GSVDModel(nn.Module):
             params.requires_grad = False
 
         self.gsvd_values_dict = {}
-
-    def calculate_layer_compression_ratio(self, scores_info: dict, total_compression_ratio: float):
-        grouped_stats = defaultdict(lambda: {'scores': []})
-
-        # Collect Taylor scores for each module
-        for module_name, taylor_score in scores_info.items():
-            match = re.search(r'self_attn\.(q_proj|k_proj|v_proj|o_proj)|mlp\.(gate_proj|up_proj|down_proj)', module_name)
-            if match:
-                module_type_name = match.group(0)
-                grouped_stats[module_type_name]['scores'].append(taylor_score.cpu())
-
-        results = {}
-
-        # Define a function to remove outliers using IQR
-        def remove_outliers_using_iqr(scores):
-            scores = np.array(scores)
-            q1 = np.percentile(scores, 25)  # 1st quartile
-            q3 = np.percentile(scores, 75)  # 3rd quartile
-            iqr = q3 - q1  # Interquartile Range (IQR)
-            lower_bound = q1 - 1.5 * iqr
-            upper_bound = q3 + 1.5 * iqr
-            # Filter scores within the IQR bounds
-            filtered_scores = [score for score in scores if lower_bound <= score <= upper_bound]
-            return filtered_scores
-
-        # Apply IQR to remove outliers for each module's Taylor scores
-        for module, stats in grouped_stats.items():
-            scores = stats['scores']
-            if len(scores) > 2:  # Ensure enough data for IQR calculation
-                filtered_scores = remove_outliers_using_iqr(scores)
-                average_taylor_score = sum(filtered_scores) / len(filtered_scores) if filtered_scores else 0
-            else:
-                average_taylor_score = sum(scores) / len(scores) if scores else 0
-
-            results[module] = {"Average_Taylor_Score": average_taylor_score}
-
-        allocations_info = {}
-
-        # Calculate compression ratio for each module
+    
+    def calculate_layer_compression_ratio(self):
+        '''
+        calculate module-wise compression ratio
         for module_name, module in self.model.named_modules():
             if isinstance(module, nn.Linear) and "lm_head" not in module_name:
-                match = re.search(r'self_attn\.(q_proj|k_proj|v_proj|o_proj)|mlp\.(gate_proj|up_proj|down_proj)', module_name)
-                if match:
-                    module_type_name = match.group(0)
-                    average_taylor_score = results[module_type_name]["Average_Taylor_Score"]
-                    module.compression_ratio = 1 - (1 - total_compression_ratio) * (scores_info[module_name] / average_taylor_score)
-
-                # Scale compression ratio to prevent it from exceeding bounds
-                if module.compression_ratio <= 0:
-                    module.compression_ratio = torch.tensor(0)
-                elif module.compression_ratio > 2 * total_compression_ratio and total_compression_ratio < 0.5:
-                    module.compression_ratio = torch.tensor(2 * total_compression_ratio)
-                elif module.compression_ratio > 2 * total_compression_ratio and total_compression_ratio > 0.5:
-                    module.compression_ratio = torch.tensor(0.8)
-
-                allocations_info[module_name] = module.compression_ratio
-        return allocations_info
-        
-    def compression_ratio_allocation(
-            self,
-            total_compression_ratio: float,
-            calibration_dataloader: DataLoader,
-            device: Literal["cuda", "cpu"] = "cuda",
-            metric: Literal["gradient", "taylor"] = "taylor",
-            use_cache: bool = False,
-            verbose: bool = True,
-            *args, **kwargs
-        ):
-        print("=======>Compression_ratio allocation within LLM")
-        model_id: str = self.model.config._name_or_path
-        cache_file = f"./cache/{model_id.replace('/', '-')}_compression_ratio_scores_info.pt"
-        # use cache
-        if os.path.exists(cache_file) and use_cache:
-            scores_info = torch.load(cache_file, map_location="cpu", weights_only=False)
-            for name, module in self.model.named_modules():
-                if isinstance(module, nn.Linear) and "lm_head" not in name:
-                    module.score_info = scores_info[name].to(module.weight.device)
-            
-            allocations_info = self.calculate_layer_compression_ratio(scores_info=scores_info, total_compression_ratio=total_compression_ratio)
-            if verbose:
-                print("=" * 100)
-                print(f"gradient info distribution: {scores_info}")
-                print("=" * 100)
-                print(f"Compression ratio allocation: {allocations_info}")
-            return allocations_info
-        
-        # calculate compression_ratio allocation
-        num_layers = len(self.model.model.layers)
-        layer_collects = {}
-        for layer_id in range(num_layers):
-            layer_name = f"model.layers.{layer_id}"
-            layer = self.model.get_submodule(layer_name)
-            for name, module in layer.named_modules():
-                if isinstance(module, nn.Linear):
-                    module.score_info = 0
-            layer_collects[layer_name] = layer
-
-        # Single GPU (not enough CUDA Memory)
-        for layer_id, (layer_name, layer) in enumerate(tqdm(layer_collects.items(), total=len(layer_collects), desc="Compression Ratio Allocation", leave=True)):
-            layer.requires_grad_(True)
-
-            iterator = tqdm(calibration_dataloader, desc=f"{layer_name}", total=len(calibration_dataloader), leave=True)
-            self.model.to(device=device)
-            for batch in iterator:
-                if len(batch) == 2:
-                    attention_mask = None
-                else:
-                    attention_mask = batch["attention_mask"].to(device)
-                input_ids = batch["input_ids"].to(device)
-                labels = batch["labels"].to(device)
-                
-                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, labels=labels, use_cache=False)
-                loss = outputs[0]
-                # backpropogation
-                loss.backward()
-                
-                for name, module in layer.named_modules():
-                    if isinstance(module, nn.Linear):
-                        if metric == "gradient":
-                            module.score_info += torch.norm(module.weight.grad.detach(), p='fro') * np.log2(num_layers - layer_id + 1)
-                        elif metric == "taylor":
-                            module.score_info += torch.norm(module.weight.grad.detach() * module.weight.data, p='fro') * np.log2(num_layers - layer_id + 1)
-
-                # clear gradients cache
-                self.model.zero_grad()
-
-            # reset requires_grad_ to False
-            layer.requires_grad_(False)
-            
-            if "cuda" in device:
-                torch.cuda.empty_cache()
-
-        # save allocation info as cache
-        scores_info = {}
-        for name, module in self.model.named_modules():
-            if isinstance(module, nn.Linear) and "lm_head" not in name:
-                scores_info[name] = module.score_info
-        if not os.path.exists("./cache"):
-            os.makedirs("./cache")
-        torch.save(scores_info, cache_file)
-
-        allocations_info = self.calculate_layer_compression_ratio(scores_info=scores_info, total_compression_ratio=total_compression_ratio)
-        if verbose:
-            print("=" * 100)
-            print(f"gradient info distribution: {scores_info}")
-            print("=" * 100)
-            print(f"Compression ratio allocation: {allocations_info}")
-        
-        # Multi GPU still on progress
+                module.compression_ratio = self_define_ratio
+        '''
+        pass
     
     def compute_bi(
             self,
@@ -337,8 +193,8 @@ class GSVDModel(nn.Module):
             layer_id: int,
             block_type: Literal["attention", "mlp"],
             target_layer_types: Union[List[str], str] = ["q_proj", "k_proj", "v_proj", "o_proj", "down_proj", "up_proj", "gate_proj"],
-            allocation_aware: bool = True, 
             device: Literal["cuda", "cpu"] = "cuda",
+            allocation_aware: Optional[bool] = None,
             verbose: bool  = False
         ):
         '''
@@ -379,7 +235,8 @@ class GSVDModel(nn.Module):
             for target_layer in target_layer_names:
                 module = self.model.get_submodule(target_layer)
                 if isinstance(module, nn.Linear):
-                    compression_ratio = module.compression_ratio.cpu().item()
+                    compression_ratio = getattr(module, "compression_ratio", None)
+                    compression_ratio = compression_ratio.cpu().item() if compression_ratio is not None else None
                     compression_ratio_list.append(compression_ratio)
                     if compression_ratio == 0:
                         continue
@@ -484,7 +341,8 @@ class GSVDModel(nn.Module):
             self,
             gsvd_layer_grads: dict,
             metric: Literal["gradient", "taylor"] = "taylor",
-            compression_ratio: Optional[float] = None
+            compression_ratio: Optional[float] = None,
+            threshold_ratio: Optional[float] = None,
         ):
         if not gsvd_layer_grads:
             gsvd_layer_grads = self.gsvd_layer_grads
@@ -506,10 +364,12 @@ class GSVDModel(nn.Module):
             if gsvd_layer.compression_ratio is not None:
                 compression_ratio = gsvd_layer.compression_ratio
 
-            assert compression_ratio is not None, "set compression ratio"
-            
-            k = self.compute_preserve_rank(gsvd_layer, compression_ratio=compression_ratio)
-            _, indices = torch.topk(svd_importance, k=k)
+            if compression_ratio is not None:            
+                k = self.compute_preserve_rank(gsvd_layer, compression_ratio=compression_ratio)
+                _, indices = torch.topk(svd_importance, k=k)
+            else:
+                assert threshold_ratio, "Please provide Taylor threshold to select rank adaptively"
+                indices = adaptive_rank_selection(svd_importance_list=svd_importance, target_ratio=threshold_ratio)
             indices_dict[gsvd_layer_name] = indices
             self.gsvd_values_dict[gsvd_layer_name] = {}
             self.gsvd_values_dict[gsvd_layer_name]["svd_importance"] = torch.round(svd_importance.cpu(), decimals=3).tolist()

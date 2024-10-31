@@ -11,14 +11,15 @@ def compress(
     calibration_dataloader: DataLoader,
     layers_id: Optional[Union[List[int], int]] = None,
     num_prune_layers: Optional[int] = None,
-    allocation_aware: bool = True,
     mlp_target_layer_types: Union[List[str], str] = ["down_proj", "up_proj", "gate_proj"],
     attn_target_layer_types: Union[List[str], str] = ["q_proj", "k_proj", "v_proj", "o_proj"],
     metric: Literal["gradient", "taylor"] = "taylor",
     compression_ratio: Optional[float] = None,
+    threshold_ratio: Optional[float] = None,
     device: Literal["cuda", "cpu"] = "cuda",
     save_path: Optional[str] = None,
     angular: Optional[bool] = False,
+    allocation_aware: Optional[bool] = False,
     use_cache: bool = True,
     merge: bool = False,
     verbose: bool  = False
@@ -32,22 +33,16 @@ def compress(
 
     if isinstance(layers_id, int):
         layers_id = [layers_id]
-    
+
     if allocation_aware:
         print(f"=======> Start Compression ratio allocation with GSVD")
-        allocations_info = gsvd_model.compression_ratio_allocation(
-            total_compression_ratio=compression_ratio,
-            calibration_dataloader=calibration_dataloader,
-            metric="taylor",
-            device=device,
-            use_cache=use_cache,
-            verbose=verbose
-        )
-        print(allocations_info)
+        gsvd_model.calculate_layer_compression_ratio()
 
     # sort layer_id in a descending order
     layers_id.sort(reverse=True)
     print(f"=======> Start Compressing model with GSVD")
+    if threshold_ratio is not None:
+        print(f"=======> Adaptive rank selection by taylor threshold {threshold_ratio}")
     for layer_id in tqdm(layers_id, desc="GSVD Compressing", total=len(layers_id), leave=True):
         # MLP Block
         skip_flag = gsvd_model.compress_block(
@@ -63,7 +58,8 @@ def compress(
             indices_dict = gsvd_model.dynamic_svd_selection(
                 gsvd_layer_grads,
                 metric=metric, 
-                compression_ratio=compression_ratio
+                compression_ratio=compression_ratio,
+                threshold_ratio=threshold_ratio
             ) # gradient based or taylor based attribution
             gsvd_model.compile_gsvd_model(indices_dict, merge=merge, device=device) # retain important singular values and compile gsvd model
         else:
@@ -83,7 +79,8 @@ def compress(
             indices_dict = gsvd_model.dynamic_svd_selection(
                 gsvd_layer_grads,
                 metric=metric, 
-                compression_ratio=compression_ratio
+                compression_ratio=compression_ratio,
+                threshold_ratio=threshold_ratio
             ) # gradient based or taylor based attribution
             gsvd_model.compile_gsvd_model(indices_dict, merge=merge, device=device) # retain important singular values and compile gsvd model
         else:

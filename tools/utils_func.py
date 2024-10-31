@@ -1,6 +1,5 @@
 import torch
 
-
 def block_influence(
     input_hidden_state: torch.Tensor,
     output_hidden_state: torch.Tensor,
@@ -42,27 +41,18 @@ def jaccard_similarity(list1, list2):
 
     return overlap_ratio
 
-def sample_top_p(probs: torch.Tensor, p: float):
-    """
-    Perform top-p (nucleus) sampling on a probability distribution.
 
-    Args:
-        probs (torch.Tensor): Probability distribution tensor.
-        p (float): Probability threshold for top-p sampling.
+def adaptive_rank_selection(svd_importance_list, target_ratio):
+    total_sum = sum(svd_importance_list)
+    target_sum = total_sum * target_ratio
 
-    Returns:
-        torch.Tensor: Sampled token indices.
+    sorted_list = sorted(enumerate(svd_importance_list), key=lambda x: -x[1])
 
-    Note:
-        Top-p sampling selects the smallest set of tokens whose cumulative probability mass
-        exceeds the threshold p. The distribution is renormalized based on the selected tokens.
-
-    """
-    probs_sort, probs_idx = torch.sort(probs, dim=-1, descending=True)
-    probs_sum = torch.cumsum(probs_sort, dim=-1)
-    mask = probs_sum - probs_sort > p
-    probs_sort[mask] = 0.0
-    probs_sort.div_(probs_sort.sum(dim=-1, keepdim=True))
-    next_token = torch.multinomial(probs_sort, num_samples=1)
-    next_token = torch.gather(probs_idx, -1, next_token)
-    return next_token
+    cumulative_sum = 0
+    indices = []
+    for index, value in sorted_list:
+        cumulative_sum += value
+        indices.append(index)
+        if cumulative_sum >= target_sum:
+            break
+    return indices
