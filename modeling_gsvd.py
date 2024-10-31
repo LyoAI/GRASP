@@ -136,8 +136,6 @@ class GSVDModel(nn.Module):
         else:
             layers_to_remove = np.argsort(np.array(self.layer_importances))[:num_prune_layers].tolist()
         
-        print(f"Redundant layers list under predefined number of prune layers {num_prune_layers} is {layers_to_remove}")
-        
         return self.layer_importances, layers_to_remove
 
     def remove_layers(self, layers_to_remove: Optional[List[int]] = [], angular: Optional[bool] = False, num_prune_layers: Optional[int] = None):
