@@ -1,4 +1,5 @@
-from typing import Optional
+import torch
+from typing import Optional, Union
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from evaluate_gsvd import evaluate_model
 from dataset.loader import get_calibration_dataloader
@@ -9,22 +10,22 @@ def main_test(model_name: str, dataset_name: str, device: str, compression_ratio
     gsvd_model = gsvd.compress(
         model=model,
         calibration_dataloader=calibration_dataloader,
-        dataset_name=dataset_name,
-        layers_id=[i for i in range(32)],
-        act_aware= True,
+        layers_id=None,
+        num_prune_layers=9,
         allocation_aware=False,
-        alpha = 1,
-        mlp_target_layer_types = ["down_proj", "up_proj", "gate_proj"],
+        mlp_target_layer_types = ["down_proj", "up_proj", "gate_proj"], # ["down_proj", "up_proj", "gate_proj"]
         attn_target_layer_types = ["q_proj", "k_proj", "v_proj", "o_proj"],
         compression_ratio=compression_ratio,
         metric="taylor",
         device=device,
+        angular=False,
         use_cache=True,
         merge=False,
         verbose=False,
         save_path=save_path
     )
-    result = evaluate_model(gsvd_model.model, tokenizer, model_name=model_name, tasks="winogrande", eval_ppl="wikitext2", device=device)
+    torch.save(gsvd_model.gsvd_values_dict, "./cache/gsvd_values_dict.pt")
+    result = evaluate_model(gsvd_model.model, tokenizer, model_name=model_name, tasks="winogrande", eval_ppl="wikitext2", device=device) # boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa
 
 
 if __name__ == "__main__":
@@ -38,4 +39,4 @@ if __name__ == "__main__":
     calibration_dataloader = get_calibration_dataloader(dataset_name="wikitext2", tokenizer=tokenizer, num_samples=512, batch_size=1, seq_len=2048)
     dataset_name = "wikitext2"
 
-    main_test(model_name="llama", dataset_name=dataset_name, device="cuda:1", compression_ratio=0.2, save_path="./checkpoint/llama_wikitext2_0.2_asvd.pth")
+    main_test(model_name="llama", dataset_name=dataset_name, device="cuda:0", compression_ratio=0.8)

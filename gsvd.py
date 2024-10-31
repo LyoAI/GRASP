@@ -9,17 +9,16 @@ from modeling_gsvd import GSVDModel
 def compress(
     model,
     calibration_dataloader: DataLoader,
-    dataset_name: Optional[str] = None,
     layers_id: Optional[Union[List[int], int]] = None,
-    act_aware: bool =True,
+    num_prune_layers: Optional[int] = None,
     allocation_aware: bool = True,
-    alpha: float = 1,
     mlp_target_layer_types: Union[List[str], str] = ["down_proj", "up_proj", "gate_proj"],
     attn_target_layer_types: Union[List[str], str] = ["q_proj", "k_proj", "v_proj", "o_proj"],
     metric: Literal["gradient", "taylor"] = "taylor",
     compression_ratio: Optional[float] = None,
     device: Literal["cuda", "cpu"] = "cuda",
     save_path: Optional[str] = None,
+    angular: Optional[bool] = False,
     use_cache: bool = True,
     merge: bool = False,
     verbose: bool  = False
@@ -28,7 +27,8 @@ def compress(
     gsvd_model.model.to(device=device)
 
     if layers_id is None:
-        layers_id = [i for i in range(len(gsvd_model.model.layers))]
+        layers_importance, layers_id = gsvd_model.compute_bi(num_prune_layers=num_prune_layers, calibration_dataloader=calibration_dataloader, angular=angular, device=device)
+        print("Layer importance measure by BI:\n", layers_importance)
 
     if isinstance(layers_id, int):
         layers_id = [layers_id]
@@ -45,14 +45,6 @@ def compress(
         )
         print(allocations_info)
 
-    # compute scaling_matrix if activation aware
-    if act_aware:
-        gsvd_model.compute_scaling_matrix(
-            calibration_dataloader=calibration_dataloader,
-            dataset_name=dataset_name,
-            device=device
-        )
-
     # sort layer_id in a descending order
     layers_id.sort(reverse=True)
     print(f"=======> Start Compressing model with GSVD")
@@ -64,9 +56,7 @@ def compress(
             target_layer_types=mlp_target_layer_types, 
             verbose=verbose, 
             device=device,
-            act_aware=act_aware,
             allocation_aware=allocation_aware,
-            alpha=alpha
         ) # replace original linear layer with svd layer
         if not skip_flag:
             gsvd_layer_grads = gsvd_model.get_svdlayer_gradients(calibration_dataloader, device) # calculate gradients for each singular values 
@@ -86,9 +76,7 @@ def compress(
             target_layer_types=attn_target_layer_types, 
             verbose=verbose, 
             device=device,
-            act_aware=act_aware,
             allocation_aware=allocation_aware,
-            alpha=alpha
         ) # replace original linear layer with svd layer
         if not skip_flag:
             gsvd_layer_grads = gsvd_model.get_svdlayer_gradients(calibration_dataloader, device) # calculate gradients for each singular values 

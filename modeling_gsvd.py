@@ -1,5 +1,6 @@
 import os
 import re
+import json
 import torch
 import numpy as np
 import torch.nn as nn
@@ -7,6 +8,7 @@ from torch.utils.data import DataLoader
 from collections import defaultdict
 from tqdm import tqdm
 from typing import Literal, Optional, List, Union
+from tools.utils_func import block_influence
 
 
 class SVDLinear(nn.Module):
@@ -72,6 +74,8 @@ class GSVDModel(nn.Module):
         self.model = model
         for params in self.model.parameters():
             params.requires_grad = False
+
+        self.gsvd_values_dict = {}
 
     def calculate_layer_compression_ratio(self, scores_info: dict, total_compression_ratio: float):
         grouped_stats = defaultdict(lambda: {'scores': []})
@@ -221,56 +225,87 @@ class GSVDModel(nn.Module):
             print(f"Compression ratio allocation: {allocations_info}")
         
         # Multi GPU still on progress
-
-    def compute_scaling_matrix(
+    
+    def compute_bi(
             self,
-            calibration_dataloader: DataLoader,
-            dataset_name: Optional[str] = None,
-            device: Literal["cuda", "cpu"] = "cuda",
-            use_cache: bool = False,
+            num_prune_layers: Optional[int] = 1,
+            calibration_dataloader: Optional[DataLoader] = None,
+            hiddens: Optional[List[torch.Tensor]] = None,
+            angular: bool = False,
+            device: Literal["cpu", "cuda"] = "cuda",
             *args, **kwargs
         ):
-        print(f"=======>Compute Module Scaling Matrix (using cache {use_cache})")
-        model_id: str = self.model.config._name_or_path
-        cache_file = f"./cache/{model_id.replace('/', '-')}_{dataset_name}_scaling_matrix_dict.pt"
-        # use cache
-        if os.path.exists(cache_file) and use_cache:
-            scaling_matrix_dict = torch.load(cache_file, map_location=device, weights_only=False)
-            for name, module in self.model.named_modules():
-                if isinstance(module, nn.Linear) and "lm_head" not in name:
-                    module.scaling_diag_matrix = scaling_matrix_dict[name].to(device)
-            return
-        
-        def hook(module, input: torch.Tensor, output):
-            input_channel_wise_mean = input[0].abs().mean(dim=-2).detach().view(-1)
-            module.scaling_diag_matrix += input_channel_wise_mean
+        self.layer_importances = [0 for _ in self.model.model.layers]
+        """
+        Computes layer-wise importances over input tokens.
+        """
+        def compute_bi_hiddens(hiddens: Optional[List[torch.Tensor]] = None):
+            if not angular:
+                num_prune_layers = 1
 
-        for name, module in self.model.named_modules():
-            if isinstance(module, nn.Linear) and "lm_head" not in name:
-                module.scaling_diag_matrix = 0
-                module.register_forward_hook(hook)
-            
-        # get activation distribution as ASVD on calibration dataloader
-        iterator = tqdm(calibration_dataloader, desc="Activation Distribution", total=len(calibration_dataloader), leave=True)
-        self.model.to(device=device)
-        for batch in iterator:
-            if len(batch) == 2:
-                attention_mask = None
-            else:
-                attention_mask = batch["attention_mask"].to(device)
-            input_ids = batch["input_ids"].to(device)
-            labels = batch["labels"].to(device)
-            
-            self.model(input_ids=input_ids, attention_mask=attention_mask, labels=labels, use_cache=False)
+            for i in range(len(hiddens) - num_prune_layers):
+                in_hidden = hiddens[i]
+                out_hidden = hiddens[i+num_prune_layers]
+                if angular:
+                    # use only last token for angular distance as described in section 3.2
+                    # https://arxiv.org/pdf/2403.17887.pdf
+                    in_hidden = in_hidden[:,-1:]
+                    out_hidden = out_hidden[:,-1:]
+                
+                self.layer_importances[i] += block_influence(
+                    in_hidden,
+                    out_hidden,
+                    angular=angular
+                ).mean().cpu().item()
+
+        print(f"=======>Compute Block Influence")
+        assert hiddens is not None or calibration_dataloader is not None, "please provide hidden_states or calibration dataloader to compute block influence"
+        if hiddens is not None:
+            compute_bi_hiddens(hiddens=hiddens)
+        else:
+            for batch in tqdm(calibration_dataloader, desc="Compute BI", total=len(calibration_dataloader), leave=True):
+                if len(batch) == 2:
+                    attention_mask = None
+                else:
+                    attention_mask = batch["attention_mask"].to(device=device)
+                input_ids = batch["input_ids"].to(device=device)
+                outputs = self.model(input_ids=input_ids, attention_mask=attention_mask, use_cache=False, output_hidden_states=True, return_dict=True)
+                hiddens = outputs.hidden_states
+
+                compute_bi_hiddens(hiddens=hiddens)
         
-        scaling_matrix_dict = {}
-        for name, module in self.model.named_modules():
-            if isinstance(module, nn.Linear) and "lm_head" not in name:
-                module._forward_hooks.clear()
-                scaling_matrix_dict[name] = module.scaling_diag_matrix
-        torch.save(scaling_matrix_dict, cache_file)
-    
-        return
+        if angular:
+            start_layer = np.argsort(np.array(self.layer_importances[:-num_prune_layers+1]))[0]
+            layers_to_remove = list(range(start_layer, start_layer + num_prune_layers))
+        else:
+            layers_to_remove = np.argsort(np.array(self.layer_importances))[:num_prune_layers].tolist()
+        
+        print(f"Redundant layers list under predefined number of prune layers {num_prune_layers} is {layers_to_remove}")
+        
+        return self.layer_importances, layers_to_remove
+
+    def remove_layers(self, layers_to_remove: Optional[List[int]] = [], angular: Optional[bool] = False, num_prune_layers: Optional[int] = None):
+        if not layers_to_remove:
+            if angular:
+                assert self.layer_importances, "Need to compute importances with self.compute_bi()"
+                assert num_prune_layers, "Need number of layers to prune"
+                start_layer = np.argsort(np.array(self.layer_importances[:-num_prune_layers+1]))[0]
+                layers_to_remove = list(range(start_layer, start_layer + num_prune_layers))
+            else:
+                layers_to_remove = np.argsort(np.array(self.layer_importances))[:num_prune_layers].tolist()
+
+        if layers_to_remove is not None:
+            # remove layers in reverse to avoid indexing errors
+            for layer_idx in sorted(layers_to_remove, reverse=True):
+                try:
+                    del self.model.model.layers[layer_idx]
+                except IndexError:
+                    print(f"layer {layer_idx} does not exist, function may have already been called")
+                    return []
+            
+            return layers_to_remove
+        else:
+            raise NotImplementedError("lack layers_to_remove")
 
     def _set_module(self, model, submodule_key, module):
         tokens = submodule_key.split('.')
@@ -279,22 +314,12 @@ class GSVDModel(nn.Module):
             sub_model = getattr(sub_model, token)
         setattr(sub_model, tokens[-1], module)
 
-    def replace_with_GSVDLayer(self, target_layer: str, device: Literal["cuda", "cpu"] = "cuda", act_aware: bool =True, alpha: float = 1):
+    def replace_with_GSVDLayer(self, target_layer: str, device: Literal["cuda", "cpu"] = "cuda"):
         replace_flag = False
         module = self.model.get_submodule(target=target_layer)
         if isinstance(module, nn.Linear):
             w = module.weight.data
-
-            if act_aware:
-                scaling_diag_matrix = torch.ones_like(w) # avoid zero division
-                if hasattr(module, "scaling_diag_matrix"):
-                    scaling_diag_matrix = module.scaling_diag_matrix ** alpha
-                scaling_diag_matrix += 1e-6 # avoid zero division
-                w = w * scaling_diag_matrix.view(1, -1)
-
             U, S, Vh = torch.linalg.svd(w.to(device=device), full_matrices=False)
-            if act_aware:
-                Vh = Vh / scaling_diag_matrix.to(device=device)
 
             bias = module.bias
             compression_ratio = getattr(module, "compression_ratio", None)
@@ -312,9 +337,7 @@ class GSVDModel(nn.Module):
             layer_id: int,
             block_type: Literal["attention", "mlp"],
             target_layer_types: Union[List[str], str] = ["q_proj", "k_proj", "v_proj", "o_proj", "down_proj", "up_proj", "gate_proj"],
-            act_aware: bool = True,
             allocation_aware: bool = True, 
-            alpha: float = 1,
             device: Literal["cuda", "cpu"] = "cuda",
             verbose: bool  = False
         ):
@@ -325,7 +348,7 @@ class GSVDModel(nn.Module):
             raise ValueError("Layer id should be given, but got None")
         
         if target_layer_types is None:
-            raise ValueError("Target layer types should be given, but got None")
+            return True
 
         if block_type == "attention":
             default_layer_types = ["q_proj", "k_proj", "v_proj", "o_proj"] # by default
@@ -361,13 +384,12 @@ class GSVDModel(nn.Module):
                     if compression_ratio == 0:
                         continue
                     else:
-                        self.replace_with_GSVDLayer(target_layer=target_layer, device=device, act_aware=act_aware, alpha=alpha)
+                        self.replace_with_GSVDLayer(target_layer=target_layer, device=device)
             if np.all(np.array(compression_ratio_list) == 0):
                 return True
         else:
             for target_layer in target_layer_names:
-                self.replace_with_GSVDLayer(target_layer=target_layer, device=device, act_aware=act_aware, alpha=alpha)
-
+                self.replace_with_GSVDLayer(target_layer=target_layer, device=device)
         
         if verbose:
             print(self)
@@ -470,37 +492,28 @@ class GSVDModel(nn.Module):
 
         indices_dict = {}
 
-        if metric == "gradient":
-            for gsvd_layer_name, gsvd_layer_grad in gsvd_layer_grads.items():
-                gsvd_layer: GSVDLayer = self.model.get_submodule(gsvd_layer_name)
-                svd_importance = torch.abs(gsvd_layer_grad)
+        for gsvd_layer_name, gsvd_layer_grad in gsvd_layer_grads.items():
+            gsvd_layer: GSVDLayer = self.model.get_submodule(gsvd_layer_name)
+            S = gsvd_layer.S
 
-                if gsvd_layer.compression_ratio is not None:
-                    compression_ratio = gsvd_layer.compression_ratio
-                if compression_ratio is None:
-                    raise NotImplementedError("set compression ratio")
-                
-                k = self.compute_preserve_rank(gsvd_layer, compression_ratio=compression_ratio)
-                _, indices = torch.topk(svd_importance, k=k)
-                indices_dict[gsvd_layer_name] = indices
+            if metric == "gradient":
+                svd_importance: torch.Tensor = torch.abs(gsvd_layer_grad)
+            elif metric == "taylor":
+                svd_importance: torch.Tensor = torch.abs(gsvd_layer_grad * S)
+            else:
+                raise RuntimeError(f"{metric} not support")
 
-        elif metric == "taylor":
-            for gsvd_layer_name, gsvd_layer_grad in gsvd_layer_grads.items():
-                gsvd_layer: GSVDLayer = self.model.get_submodule(gsvd_layer_name)
-                S = gsvd_layer.S
+            if gsvd_layer.compression_ratio is not None:
+                compression_ratio = gsvd_layer.compression_ratio
 
-                if gsvd_layer.compression_ratio is not None:
-                    compression_ratio = gsvd_layer.compression_ratio
-                if compression_ratio is None:
-                    raise NotImplementedError("set compression ratio")
-
-                k = self.compute_preserve_rank(gsvd_layer, compression_ratio=compression_ratio)
-                svd_importance = torch.abs(gsvd_layer_grad * S)
-                _, indices = torch.topk(svd_importance, k=k)
-                indices_dict[gsvd_layer_name] = indices
-
-        else:
-            raise RuntimeError(f"{metric} not support")
+            assert compression_ratio is not None, "set compression ratio"
+            
+            k = self.compute_preserve_rank(gsvd_layer, compression_ratio=compression_ratio)
+            _, indices = torch.topk(svd_importance, k=k)
+            indices_dict[gsvd_layer_name] = indices
+            self.gsvd_values_dict[gsvd_layer_name] = {}
+            self.gsvd_values_dict[gsvd_layer_name]["svd_importance"] = torch.round(svd_importance.cpu(), decimals=3).tolist()
+            self.gsvd_values_dict[gsvd_layer_name]["svd_value"] = torch.round(S.data.cpu(), decimals=3).tolist()
 
         self.indices_dict = indices_dict
         return indices_dict
