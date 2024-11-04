@@ -1,6 +1,7 @@
 import os
 import torch
 import torch.nn as nn
+from torch.utils.data import Dataset
 from typing import List, Optional, Literal
 from peft import (
     LoraConfig,
@@ -18,11 +19,27 @@ from evaluate_gsvd import evaluate_model
 
 # Train function refer to Alpaca-Lora
 
+class TrainDataset(Dataset):
+    def __init__(self, input_tensors) -> None:
+        self.inputs = input_tensors
+        self.targets = input_tensors.clone()
+    
+    def __len__(self):
+        return len(self.inputs)
+    
+    def __getitem__(self, index):
+        result = {}
+        result["input_ids"] = self.inputs[index, :-1]
+        result["labels"] = self.targets[index, 1:]
+        return result
+
+
 def train(
     # model params
     model, # layer-wise pruned model
     tokenizer,
     data_path: Optional[str] = 'yahma/alpaca-cleaned',
+    dataset_name: Optional[str] = None,
     output_dir: Optional[str] = './checkpoint',
     # lora hyperparams
     lora_r: int = 128,
@@ -43,6 +60,7 @@ def train(
     add_eos_token: bool = False,
     resume_from_checkpoint: Optional[str] = None,
     prompt_template_name: str = "alpaca",
+    is_wikitext: Optional[bool] = None,
     device: Literal["cuda", "cpu"] = "cuda"
 ):
     print(
@@ -66,7 +84,6 @@ def train(
 
     
     gradient_accumulation_steps = batch_size // mirco_batch_size
-    prompter = Prompter(template_name=prompt_template_name)
 
     config = LoraConfig(
         r=lora_r,
@@ -124,11 +141,22 @@ def train(
             tokenized_full_prompt["labels"] = [-100] * user_prompt_len + tokenized_full_prompt["labels"][user_prompt_len:]
 
         return tokenized_full_prompt
+
+    def process_wikitext_data(train_data, tokenizer, seq_len, field_name):
+        train_ids = tokenizer("\n\n".join(train_data[field_name]), return_tensors='pt').input_ids[0]
+        train_ids_batch = []
+        nsamples = train_ids.numel() // seq_len
+
+        for i in range(nsamples):
+            batch = train_ids[(i * seq_len):((i + 1) * seq_len)]
+            train_ids_batch.append(batch)
+        train_ids_batch = torch.stack(train_ids_batch)
+        return TrainDataset(input_tensors=train_ids_batch)
     
     if data_path.endswith(".json") or data_path.endswith(".jsonl"):
         data = load_dataset("json", data_files=data_path)
     else:
-        data = load_dataset(data_path)
+        data = load_dataset(data_path, name=dataset_name)
 
     if resume_from_checkpoint:
         # Check the available weights and load them
@@ -153,17 +181,33 @@ def train(
     peft_model.print_trainable_parameters()
 
     if val_set_size > 0:
-        train_val = data["train"].train_test_split(
-            test_size=val_set_size, shuffle=True, seed=42
-        )
-        train_data = (
-            train_val["train"].shuffle().map(generate_and_tokenize_prompt)
-        )
-        val_data = (
-            train_val["test"].shuffle().map(generate_and_tokenize_prompt)
-        )
+        if is_wikitext:
+            train_val = data["train"].train_test_split(
+                test_size=val_set_size, shuffle=True, seed=42
+            )
+            train_data = train_val["train"].shuffle()
+            val_data = train_val["test"].shuffle()
+            train_data = process_wikitext_data(train_data, tokenizer, max_length, 'text')
+            val_data = process_wikitext_data(val_data, tokenizer, max_length, 'text')
+        else:
+            prompter = Prompter(template_name=prompt_template_name)
+            train_val = data["train"].train_test_split(
+                test_size=val_set_size, shuffle=True, seed=42
+            )
+            train_data = (
+                train_val["train"].shuffle().map(generate_and_tokenize_prompt)
+            )
+            val_data = (
+                train_val["test"].shuffle().map(generate_and_tokenize_prompt)
+            )
     else:
-        train_data = data["train"].shuffle().map(generate_and_tokenize_prompt)
+        if is_wikitext:
+            train_data = data["train"].shuffle()
+            train_data = process_wikitext_data(train_data, tokenizer, max_length, 'text')
+
+        else:
+            prompter = Prompter(template_name=prompt_template_name)
+            train_data = data["train"].shuffle().map(generate_and_tokenize_prompt)
         val_data = None
     
     trainer = Trainer(
@@ -232,6 +276,8 @@ if __name__ == "__main__":
         tokenizer=tokenizer,
         lora_r=lora_r,
         lora_target_modules=lora_target_modules,
+        data_path='wikitext',
+        dataset_name='wikitext-2-raw-v1'
     )
 
     result = evaluate_model(peft_model, tokenizer, model_name="llama", tasks="mathqa,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa", eval_ppl="wikitext2", device=device) # boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa

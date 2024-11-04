@@ -208,6 +208,23 @@ def get_calibration_dataloader(
 
     elif 'mathqa' in dataset_name:
         train_data = load_dataset("allenai/math_qa", split="train")
+        random_indices = random.sample(range(len(train_data)), num_samples)
+        train_data = train_data.select(random_indices)
+        def preprocess_mathqa(sample):
+            example = {}
+            label: str = sample["correct"]
+            example["text"] = (
+                "Question: "
+                + sample["Problem"]
+                + "\nRationale: "
+                + sample["Rationale"]
+                + "\nAnswer: "
+                + label
+            )
+            return example
+        train_data = train_data.map(preprocess_mathqa)
+        train_data = train_data.map(process_task_data)
+        train_dataset = train_data.select_columns(["input_ids", "attention_mask", "labels"])
     else:
         raise NotImplementedError
 
