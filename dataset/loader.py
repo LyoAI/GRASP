@@ -2,7 +2,7 @@ import os
 import random
 import torch
 from datasets import load_dataset
-from typing import Optional, Literal
+from typing import Optional, Literal, Union
 from torch.utils.data import Dataset, DataLoader
 from transformers import DataCollatorForSeq2Seq
 
@@ -12,6 +12,7 @@ def get_calibration_dataloader(
     tokenizer,
     num_samples: Optional[int] = 128, # wikitext: 512
     seq_len: Optional[float] = 2048,
+    padding: Optional[Union[str, bool]] = 'max_length',
     batch_size: Optional[int] = 1, # wikitext2: 4
     seed: Optional[int] = 42  
 ):
@@ -38,12 +39,12 @@ def get_calibration_dataloader(
             prompt,
             truncation=True,
             max_length=seq_len,
-            padding='max_length',
+            padding=padding,
             return_tensors=None,
         )
         if (
             result["input_ids"][-1] != tokenizer.eos_token_id
-            and len(result["input_ids"]) < 2048
+            and len(result["input_ids"]) < seq_len
             and add_eos_token
         ):
             result["input_ids"].append(tokenizer.eos_token_id)
@@ -228,15 +229,16 @@ def get_evaluation_dataloader(dataset_name: Literal["wikitext2", "ptb", "c4"], t
             "ptb_text_only",
             "penn_treebank",
             split="validation",
+            trust_remote_code=True
         )
         testenc = tokenizer("\n\n".join(valdata["sentence"]), return_tensors="pt")
         return testenc
     if "c4" in dataset_name:
         testdata = load_dataset(
             "allenai/c4",
-            "allenai--c4",
             data_files={"validation": "en/c4-validation.00000-of-00008.json.gz"},
             split="validation",
+            trust_remote_code=True
         )
         testenc = tokenizer("\n\n".join(testdata["text"]), return_tensors="pt")
         return testenc

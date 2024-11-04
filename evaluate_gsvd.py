@@ -128,6 +128,7 @@ def evaluate_model(
     num_fewshot=0,
     limit=-1,
     batch_size=1,
+    is_peft_model: Optional[bool] = False,
     device: Literal["cuda", "cpu"] = "cuda"
 ):
     """
@@ -151,16 +152,26 @@ def evaluate_model(
             # print(dataset)
             testenc = testloader.input_ids
             nsamples = testenc.numel() // lm.seqlen
-            use_cache = lm.model.config.use_cache
-            lm.model.config.use_cache = False
-            lm.model.eval()
+            if is_peft_model:
+                use_cache = lm.model.model.config.use_cache
+                lm.model.model.config.use_cache = False
+                lm.model.model.eval()
+            else:
+                use_cache = lm.model.config.use_cache
+                lm.model.config.use_cache = False
+                lm.model.eval()
             nlls = []
 
             for i in tqdm(range(nsamples)):
                 batch = testenc[:, (i * lm.seqlen) : ((i + 1) * lm.seqlen)].to(lm.device)
-                outputs = lm.model.model(batch)
-                hidden_states = outputs[0]  # .to(lm.model.lm_head.weight.device)
-                logits = lm.model.lm_head(hidden_states)  # .contiguous()
+                if is_peft_model:
+                    outputs = lm.model.model.model(batch)
+                    hidden_states = outputs[0]  # .to(lm.model.lm_head.weight.device)
+                    logits = lm.model.model.lm_head(hidden_states)  # .contiguous()
+                else:
+                    outputs = lm.model.model(batch)
+                    hidden_states = outputs[0]  # .to(lm.model.lm_head.weight.device)
+                    logits = lm.model.lm_head(hidden_states)  # .contiguous()
                 shift_logits = logits[:, :-1, :]  # .contiguous()
                 shift_labels = testenc[:, (i * lm.seqlen) : ((i + 1) * lm.seqlen)][:, 1:].to(lm.device)
                 loss_fct = nn.CrossEntropyLoss()
@@ -175,7 +186,10 @@ def evaluate_model(
 
             ppl = torch.exp(torch.stack(nlls).sum() / (len(nlls) * lm.seqlen))
             print(dataset, ppl.item())
-            lm.model.config.use_cache = use_cache
+            if is_peft_model:
+                lm.model.model.config.use_cache = use_cache
+            else:
+                lm.model.config.use_cache = use_cache
             results[dataset] = ppl.item()
     if tasks == "longbench":
         from tools.eval_longbench import eval_longbench, full_longeval_datasets, small_longeval_datasets
