@@ -176,7 +176,6 @@ def train(
         ),
     )
     trainer.train(resume_from_checkpoint=resume_from_checkpoint)
-    torch.save(gsvd_model, output_dir)
 
     return gsvd_model
 
@@ -185,16 +184,19 @@ def train(
 if __name__ == "__main__":
     import os
     os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    gsvd_model = torch.load("/home/zhangyong203/GSVD/checkpoint/meta-llama-Llama-2-7b-hf.pth", weights_only=False)
+    device="cuda:0"
+    output_dir="./checkpoint/gsvd_tuning"
+    gsvd_model = torch.load("/home/zhangyong203/GSVD/checkpoint/meta-llama-Llama-2-7b-hf.pth", weights_only=False, map_location=device)
     gsvd_model.redundant_layers = [27, 26, 28, 24, 29, 25, 23, 22, 21]
     tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-2-7b-hf', token="HuggingfaceToken")
-    device="cuda:0"
 
     print("=" * 100)
     gsvd_model = train(
         gsvd_model=gsvd_model,
         tokenizer=tokenizer,
-        output_dir="./checkpoint/gsvd_tuning"
+        output_dir=output_dir
     )
 
     result = evaluate_model(gsvd_model.model, tokenizer, model_name="llama", tasks="mathqa,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa", eval_ppl="wikitext2,c4,ptb", device=device, is_peft_model=False) # boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa
+    model_id: str = gsvd_model.model.config._name_or_path
+    torch.save(gsvd_model, os.path.join(output_dir, f"{model_id.replace('/', '-')}.pth"))
