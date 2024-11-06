@@ -81,6 +81,12 @@ class GSVDModel(nn.Module):
                 module.compression_ratio = self_define_ratio
         '''
         pass
+
+    def print_trainable_params(self):
+        total_params = sum(p.numel() for p in self.parameters())
+        trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
+        trainable_percentage = (trainable_params / total_params) * 100
+        print(f"trainable params: {trainable_params} || all params: {total_params} || trainable: {trainable_percentage:.2f}%")
     
     def compute_bi(
             self,
@@ -135,6 +141,8 @@ class GSVDModel(nn.Module):
             layers_to_remove = list(range(start_layer, start_layer + num_prune_layers))
         else:
             layers_to_remove = np.argsort(np.array(self.layer_importances))[:num_prune_layers].tolist()
+        
+        self.redundant_layers = layers_to_remove
         
         return self.layer_importances, layers_to_remove
 

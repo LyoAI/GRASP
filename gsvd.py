@@ -34,6 +34,8 @@ def compress(
 
     if isinstance(layers_id, int):
         layers_id = [layers_id]
+    
+    gsvd_model.redundant_layers = layers_id
 
     if allocation_aware:
         print(f"=======> Start Compression ratio allocation with GSVD")
@@ -180,6 +182,7 @@ def recursive_compress(
         else:
             print("=======> Skip Compressing This Block")
 
+    gsvd_model.redundant_layers = cur_remove_layer_ids
     print("=======> Done!")
     if save_path:
         torch.save(gsvd_model, save_path)
