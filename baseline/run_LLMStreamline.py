@@ -1,19 +1,20 @@
 # SET visible device
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = '2'
+os.environ["CUDA_VISIBLE_DEVICES"] = '7'
 print("CUDA_VISIBLE_DEVICES:", os.environ.get("CUDA_VISIBLE_DEVICES"))
 print("=" * 100)
 
 # strange bugs, to enable setting visble device, have to import torch after setting cuda_visible_device
 import torch
 import torch.nn as nn
-from typing import List, Optional, Literal, Union
+from typing import List, Optional, Literal, Union, Tuple
 from transformers import TrainingArguments, Trainer
 from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
 from transformers import DataCollatorForSeq2Seq
 from datasets import load_dataset
 from prompter import Prompter
 from evaluate_gsvd import evaluate_model
+
 
 class FFN(nn.Module):
     def __init__(self, in_features: int, out_features: int, intermediate_features: int, dropout=0.1):
@@ -27,14 +28,61 @@ class FFN(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.layer_norm = nn.LayerNorm(in_features)
     
-    def forward(self, x: torch.Tensor):
-        residual_x = x
-        x = self.layer_norm(x)
-        x = self.relu(self.InLinear(x))
-        x = self.dropout(x)
-        x = self.OutLinear(x)
-        return x + residual_x
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        position_ids: Optional[torch.LongTensor] = None,
+        past_key_value=None,
+        output_attentions: Optional[bool] = False,
+        use_cache: Optional[bool] = False,
+        cache_position: Optional[torch.LongTensor] = None,
+        position_embeddings: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,  # will become mandatory in v4.46
+        **kwargs,
+    ) -> Tuple[torch.FloatTensor, Optional[Tuple[torch.FloatTensor, torch.FloatTensor]]]:
+        """
+        Args:
+            hidden_states (`torch.FloatTensor`): input to the layer of shape `(batch, seq_len, embed_dim)`
+            attention_mask (`torch.FloatTensor`, *optional*):
+                attention mask of size `(batch_size, sequence_length)` if flash attention is used or `(batch_size, 1,
+                query_sequence_length, key_sequence_length)` if default attention is used.
+            output_attentions (`bool`, *optional*):
+                Whether or not to return the attentions tensors of all attention layers. See `attentions` under
+                returned tensors for more detail.
+            use_cache (`bool`, *optional*):
+                If set to `True`, `past_key_values` key value states are returned and can be used to speed up decoding
+                (see `past_key_values`).
+            past_key_value (`Tuple(torch.FloatTensor)`, *optional*): cached past key and value projection states
+            cache_position (`torch.LongTensor` of shape `(sequence_length)`, *optional*):
+                Indices depicting the position of the input sequence tokens in the sequence
+            position_embeddings (`Tuple[torch.FloatTensor, torch.FloatTensor]`, *optional*):
+                Tuple containing the cosine and sine positional embeddings of shape `(batch_size, seq_len, head_dim)`,
+                with `head_dim` being the embedding dimension of each attention head.
+            kwargs (`dict`, *optional*):
+                Arbitrary kwargs to be ignored, used for FSDP and other methods that injects code
+                into the model
+        """
+        # skip Self Attention
+        self_attn_weights = None
+        present_key_value = None
 
+        # Fully Connected
+        residual = hidden_states
+        hidden_states = self.layer_norm(hidden_states)
+        hidden_states = self.relu(self.InLinear(hidden_states))
+        hidden_states = self.dropout(hidden_states)
+        hidden_states = self.OutLinear(hidden_states)
+        hidden_states = residual + hidden_states
+
+        outputs = (hidden_states,)
+
+        if output_attentions:
+            outputs += (self_attn_weights,)
+
+        if use_cache:
+            outputs += (present_key_value,)
+
+        return outputs
 
 # Train function refer to Alpaca-Lora
 def train_and_evaluate(
@@ -55,7 +103,8 @@ def train_and_evaluate(
     resume_from_checkpoint: Optional[str] = None,
     prompt_template_name: str = "alpaca",
     layers_to_remove: Optional[Union[List[int], int]] = None,
-    set_trainable_component: Literal["ffn", "layer"] = "layer"
+    set_trainable_component: Literal["ffn", "layer"] = "layer",
+    dropout: float = 0.1
 ):
     
     model = AutoModelForCausalLM.from_pretrained(model_path, token=token)
@@ -88,14 +137,17 @@ def train_and_evaluate(
 
     # set trainable paramters
     if set_trainable_component == "layer":
-        for layer_idx in sorted(layers_to_remove, reverse=True):
+        '''
+        Inherit from the first pruned layer means remove without first layer_to_remove
+        '''
+        sorted_layers_to_remove = sorted(layers_to_remove, reverse=True)
+        for layer_idx in sorted_layers_to_remove[:-1]:
             try:
                 del model.model.layers[layer_idx]
             except IndexError:
                 print(f"layer {layer_idx} does not exist, function may have already been called")
         
-        print(layers_to_remove)
-        trainable_layer_idx = len(model.model.layers) - 1
+        trainable_layer_idx = sorted_layers_to_remove[-1]
 
         trainable_layer: nn.Module = model.model.layers[trainable_layer_idx]
         for param in trainable_layer.parameters():
@@ -103,7 +155,7 @@ def train_and_evaluate(
     elif set_trainable_component == "ffn":
         sorted_layers_to_remove = sorted(layers_to_remove, reverse=True)
         replace_trainable_idx = sorted_layers_to_remove[-1]
-        replace_module = FFN(in_features=hidden_size, out_features=hidden_size, intermediate_features=intermediate_size)
+        replace_module = FFN(in_features=hidden_size, out_features=hidden_size, intermediate_features=intermediate_size, dropout=dropout)
         model.model.layers[replace_trainable_idx] = replace_module
 
         trainable_layer: nn.Module = model.model.layers[replace_trainable_idx]
@@ -118,6 +170,8 @@ def train_and_evaluate(
         
         print(sorted_layers_to_remove[:-1])
         print(f"replace layer {replace_trainable_idx} to FFN layer:\n {replace_module}\n")
+    
+    print(f"pruned model: {model}")
 
     total_params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -242,14 +296,15 @@ def train_and_evaluate(
 
 if __name__ == "__main__":
     # SET torch.device 
-    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")    
-    output_dir="./checkpoint/streamline_llm_layer"
+    device = torch.device("cuda:7" if torch.cuda.is_available() else "cpu")    
+    output_dir="./checkpoint/streamline_llm_ffn"
     model_path = 'meta-llama/Llama-2-7b-hf'
     token = "HuggingfaceToken"
 
-    print("=" * 100)
     model = train_and_evaluate(
         model_path=model_path,
         token=token,
-        output_dir=output_dir
+        output_dir=output_dir,
+        layers_to_remove = [27, 26, 28, 24, 29, 25, 23, 22, 21],
+        set_trainable_component = "ffn"
     )
