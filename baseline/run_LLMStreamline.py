@@ -1,38 +1,48 @@
+# SET visible device
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = '2'
+print("CUDA_VISIBLE_DEVICES:", os.environ.get("CUDA_VISIBLE_DEVICES"))
+print("=" * 100)
+
+# strange bugs, to enable setting visble device, have to import torch after setting cuda_visible_device
 import torch
 import torch.nn as nn
-from torch.utils.data import Dataset
-from typing import List, Optional, Literal
-from peft import (
-    LoraConfig,
-    get_peft_model,
-    get_peft_model_state_dict,
-    set_peft_model_state_dict,
-)
+from typing import List, Optional, Literal, Union
 from transformers import TrainingArguments, Trainer
-from transformers import AutoTokenizer, AutoModelForCausalLM
+from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
 from transformers import DataCollatorForSeq2Seq
 from datasets import load_dataset
 from prompter import Prompter
 from evaluate_gsvd import evaluate_model
 
+class FFN(nn.Module):
+    def __init__(self, in_features: int, out_features: int, intermediate_features: int, dropout=0.1):
+        '''
+        Transformer FFN block
+        '''
+        super(FFN, self).__init__()
+        self.InLinear = nn.Linear(in_features=in_features, out_features=intermediate_features, bias=False)
+        self.OutLinear = nn.Linear(in_features=intermediate_features, out_features=out_features, bias=True)
+        self.relu = nn.ReLU()
+        self.dropout = nn.Dropout(dropout)
+        self.layer_norm = nn.LayerNorm(in_features)
+    
+    def forward(self, x: torch.Tensor):
+        residual_x = x
+        x = self.layer_norm(x)
+        x = self.relu(self.InLinear(x))
+        x = self.dropout(x)
+        x = self.OutLinear(x)
+        return x + residual_x
+
 
 # Train function refer to Alpaca-Lora
-
-def train(
+def train_and_evaluate(
     # model params
-    model, # layer-wise pruned model
-    tokenizer,
+    model_path: str, #
+    token: Optional[str] = None,
     data_path: Optional[str] = 'yahma/alpaca-cleaned',
     output_dir: Optional[str] = './checkpoint',
-    # lora hyperparams
-    lora_r: int = 128,
-    lora_alpha: int = 16,
-    lora_dropout: float = 0.05,
-    lora_target_modules: List[str] = [
-        "q_proj",
-        "v_proj",
-    ],
     # training hyperparameters
     batch_size: int = 32,
     mirco_batch_size: int = 4,
@@ -44,10 +54,18 @@ def train(
     add_eos_token: bool = False,
     resume_from_checkpoint: Optional[str] = None,
     prompt_template_name: str = "alpaca",
-    device: Literal["cuda", "cpu"] = "cuda"
+    layers_to_remove: Optional[Union[List[int], int]] = None,
+    set_trainable_component: Literal["ffn", "layer"] = "layer"
 ):
+    
+    model = AutoModelForCausalLM.from_pretrained(model_path, token=token)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, token=token)
+    config = AutoConfig.from_pretrained(model_path)
+    hidden_size = config.hidden_size
+    intermediate_size = config.intermediate_size
+
     print(
-        f"Training Alpaca-LoRA model with params:\n"
+        f"Finetuning GSVD model with params:\n"
         f"base_model: {model}\n"
         f"data_path: {data_path}\n"
         f"output_dir: {output_dir}\n"
@@ -55,28 +73,57 @@ def train(
         f"num_epochs: {num_epochs}\n"
         f"learning_rate: {learning_rate}\n"
         f"val_set_size: {val_set_size}\n"
-        f"lora_r: {lora_r}\n"
-        f"lora_alpha: {lora_alpha}\n"
-        f"lora_dropout: {lora_dropout}\n"
-        f"lora_target_modules: {lora_target_modules}\n"
         f"train_on_inputs: {train_on_inputs}\n"
         f"add_eos_token: {add_eos_token}\n"
         f"resume_from_checkpoint: {resume_from_checkpoint or False}\n"
         f"prompt template: {prompt_template_name}\n"
     )
-
     
     gradient_accumulation_steps = batch_size // mirco_batch_size
 
-    config = LoraConfig( 
-        r=lora_r,
-        lora_alpha=lora_alpha,
-        target_modules=lora_target_modules,
-        lora_dropout=lora_dropout,
-        bias="none",
-        task_type="CAUSAL_LM",
-    )
-    peft_model = get_peft_model(model, config)
+    # model initialization    
+    # frozen all layers first
+    for param in model.parameters():
+        param.requires_grad_(False)
+
+    # set trainable paramters
+    if set_trainable_component == "layer":
+        for layer_idx in sorted(layers_to_remove, reverse=True):
+            try:
+                del model.model.layers[layer_idx]
+            except IndexError:
+                print(f"layer {layer_idx} does not exist, function may have already been called")
+        
+        print(layers_to_remove)
+        trainable_layer_idx = len(model.model.layers) - 1
+
+        trainable_layer: nn.Module = model.model.layers[trainable_layer_idx]
+        for param in trainable_layer.parameters():
+            param.requires_grad_(True)
+    elif set_trainable_component == "ffn":
+        sorted_layers_to_remove = sorted(layers_to_remove, reverse=True)
+        replace_trainable_idx = sorted_layers_to_remove[-1]
+        replace_module = FFN(in_features=hidden_size, out_features=hidden_size, intermediate_features=intermediate_size)
+        model.model.layers[replace_trainable_idx] = replace_module
+
+        trainable_layer: nn.Module = model.model.layers[replace_trainable_idx]
+        for param in trainable_layer.parameters():
+            param.requires_grad_(True)
+
+        for layer_idx in sorted_layers_to_remove[:-1]:
+            try:
+                del model.model.layers[layer_idx]
+            except IndexError:
+                print(f"layer {layer_idx} does not exist, function may have already been called")
+        
+        print(sorted_layers_to_remove[:-1])
+        print(f"replace layer {replace_trainable_idx} to FFN layer:\n {replace_module}\n")
+
+    total_params = sum(p.numel() for p in model.parameters())
+    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    trainable_percentage = (trainable_params / total_params) * 100
+    print(f"trainable params: {trainable_params} || all params: {total_params} || trainable: {trainable_percentage:.2f}%")
+
 
     # tokenizer initialization and tokenize inputs for training
     tokenizer.pad_token_id = (0) # we want this to be different from the eos token
@@ -135,22 +182,12 @@ def train(
         checkpoint_name = os.path.join(
             resume_from_checkpoint, "pytorch_model.bin"
         )  # Full checkpoint
-        if not os.path.exists(checkpoint_name):
-            checkpoint_name = os.path.join(
-                resume_from_checkpoint, "adapter_model.bin"
-            )  # only LoRA model - LoRA config above has to fit
-            resume_from_checkpoint = (
-                False  # So the trainer won't try loading its state
-            )
         # The two files above have a different name depending on how they were saved, but are actually the same.
         if os.path.exists(checkpoint_name):
             print(f"Restarting from {checkpoint_name}")
-            adapters_weights = torch.load(checkpoint_name)
-            set_peft_model_state_dict(peft_model, adapters_weights)
+            model = torch.load(checkpoint_name)
         else:
             print(f"Checkpoint {checkpoint_name} not found")
-    
-    peft_model.print_trainable_parameters()
 
     prompter = Prompter(template_name=prompt_template_name)
     if val_set_size > 0:
@@ -168,7 +205,7 @@ def train(
         val_data = None
     
     trainer = Trainer(
-        model=peft_model,
+        model=model,
         train_dataset=train_data,
         eval_dataset=val_data,
         args=TrainingArguments(
@@ -195,37 +232,24 @@ def train(
     )
     trainer.train(resume_from_checkpoint=resume_from_checkpoint)
 
-    peft_model.save_pretrained(output_dir)
+    result = evaluate_model(model, tokenizer, model_name="llama", tasks="mathqa,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa", eval_ppl="wikitext2,c4,ptb", device=device, is_peft_model=False) # boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa
+    model_id: str = model.config._name_or_path
+    torch.save(model, os.path.join(output_dir, f"{model_id.replace('/', '-')}.pth"))
 
-    return peft_model
+    return model
 
 
 
 if __name__ == "__main__":
-    import os
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    model = AutoModelForCausalLM.from_pretrained('meta-llama/Llama-2-7b-hf', token="HuggingfaceToken")
-    tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-2-7b-hf', token="HuggingfaceToken")
-    lora_r = 128
-    lora_target_modules = ["q_proj", "v_proj", "k_proj", "o_proj", "down_proj", "up_proj", "gate_proj"]
-    layers_to_remove = [27, 26, 28, 24, 29, 25, 23, 22, 21]
-    device="cuda:0"
+    # SET torch.device 
+    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")    
+    output_dir="./checkpoint/streamline_llm_layer"
+    model_path = 'meta-llama/Llama-2-7b-hf'
+    token = "HuggingfaceToken"
 
-    # For simplify, we manually remove the redundant layers found by running run_shortgpt.py
-    # remove layers in reverse to avoid indexing errors
-    for layer_idx in sorted(layers_to_remove, reverse=True):
-        try:
-            del model.model.layers[layer_idx]
-        except IndexError:
-            print(f"layer {layer_idx} does not exist, function may have already been called")
-    
-    print(layers_to_remove)
     print("=" * 100)
-    peft_model = train(
-        model=model,
-        tokenizer=tokenizer,
-        lora_r=lora_r,
-        lora_target_modules=lora_target_modules
+    model = train_and_evaluate(
+        model_path=model_path,
+        token=token,
+        output_dir=output_dir
     )
-
-    result = evaluate_model(peft_model, tokenizer, model_name="llama", tasks="mathqa,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa", eval_ppl="wikitext2,c4,ptb", device=device, is_peft_model=True) # boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa

@@ -1,4 +1,10 @@
+# SET visible device
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = '2'
+print("CUDA_VISIBLE_DEVICES:", os.environ.get("CUDA_VISIBLE_DEVICES"))
+print("=" * 100)
+
+# strange bugs, to enable setting visble device, have to import torch after setting cuda_visible_device
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
@@ -21,7 +27,7 @@ def train(
     # training hyperparameters
     batch_size: int = 32,
     mirco_batch_size: int = 4,
-    num_epochs: int = 3,
+    num_epochs: int = 1,
     learning_rate: float = 3e-4,
     max_length: int = 256,
     val_set_size: int = 2000,
@@ -182,19 +188,20 @@ def train(
 
 
 if __name__ == "__main__":
-    import os
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    device="cuda:0"
-    output_dir="./checkpoint/gsvd_tuning"
-    gsvd_model = torch.load("/home/zhangyong203/GSVD/checkpoint/meta-llama-Llama-2-7b-hf.pth", weights_only=False, map_location=device)
+    # SET torch.device 
+    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
+    # model initialization
+    output_dir="./checkpoint/svd_tuning/3_epoch"
+    gsvd_model = torch.load("/home/zhangyong203/GSVD/checkpoint/naive_svd_meta-llama-Llama-2-7b-hf.pth", weights_only=False, map_location="cpu")
     gsvd_model.redundant_layers = [27, 26, 28, 24, 29, 25, 23, 22, 21]
     tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-2-7b-hf', token="HuggingfaceToken")
 
-    print("=" * 100)
+    # visible cuda
     gsvd_model = train(
         gsvd_model=gsvd_model,
         tokenizer=tokenizer,
-        output_dir=output_dir
+        output_dir=output_dir,
+        num_epochs=3
     )
 
     result = evaluate_model(gsvd_model.model, tokenizer, model_name="llama", tasks="mathqa,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa", eval_ppl="wikitext2,c4,ptb", device=device, is_peft_model=False) # boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa

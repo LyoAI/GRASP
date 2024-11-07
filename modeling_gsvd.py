@@ -387,7 +387,7 @@ class GSVDModel(nn.Module):
     def compile_gsvd_model(
         self,
         indices_dict: Optional[dict] = None,
-        merge: Optional[bool] = True,
+        merge: Optional[bool] = False,
         sigma_fuse: Literal["UV", "U", "V"] = "UV",
         device: Literal["cpu", "cuda"] = "cuda"
     ):
