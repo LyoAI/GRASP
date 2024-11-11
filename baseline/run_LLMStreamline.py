@@ -1,6 +1,6 @@
 # SET visible device
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = '7'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 print("CUDA_VISIBLE_DEVICES:", os.environ.get("CUDA_VISIBLE_DEVICES"))
 print("=" * 100)
 
@@ -296,8 +296,8 @@ def train_and_evaluate(
 
 if __name__ == "__main__":
     # SET torch.device 
-    device = torch.device("cuda:7" if torch.cuda.is_available() else "cpu")    
-    output_dir="./checkpoint/streamline_llm_ffn"
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")    
+    output_dir="./checkpoint/streamline_llm_ffn/1_epoch"
     model_path = 'meta-llama/Llama-2-7b-hf'
     token = "HuggingfaceToken"
 
@@ -306,5 +306,7 @@ if __name__ == "__main__":
         token=token,
         output_dir=output_dir,
         layers_to_remove = [27, 26, 28, 24, 29, 25, 23, 22, 21],
-        set_trainable_component = "ffn"
+        set_trainable_component = "ffn",
+        device=device,
+        num_epochs=1
     )

@@ -1,6 +1,6 @@
 # SET visible device
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = '2'
+os.environ["CUDA_VISIBLE_DEVICES"] = '0'
 print("CUDA_VISIBLE_DEVICES:", os.environ.get("CUDA_VISIBLE_DEVICES"))
 print("=" * 100)
 
@@ -189,9 +189,9 @@ def train(
 
 if __name__ == "__main__":
     # SET torch.device 
-    device = torch.device("cuda:2" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     # model initialization
-    output_dir="./checkpoint/svd_tuning/3_epoch"
+    output_dir="./checkpoint/svd_tuning/1_epoch"
     gsvd_model = torch.load("/home/zhangyong203/GSVD/checkpoint/naive_svd_meta-llama-Llama-2-7b-hf.pth", weights_only=False, map_location="cpu")
     gsvd_model.redundant_layers = [27, 26, 28, 24, 29, 25, 23, 22, 21]
     tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-2-7b-hf', token="HuggingfaceToken")
@@ -201,9 +201,9 @@ if __name__ == "__main__":
         gsvd_model=gsvd_model,
         tokenizer=tokenizer,
         output_dir=output_dir,
-        num_epochs=3
+        num_epochs=1
     )
-
-    result = evaluate_model(gsvd_model.model, tokenizer, model_name="llama", tasks="mathqa,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa", eval_ppl="wikitext2,c4,ptb", device=device, is_peft_model=False) # boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa
     model_id: str = gsvd_model.model.config._name_or_path
     torch.save(gsvd_model, os.path.join(output_dir, f"{model_id.replace('/', '-')}.pth"))
+
+    result = evaluate_model(gsvd_model.model, tokenizer, model_name="llama", tasks="mathqa,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa", eval_ppl="wikitext2,c4,ptb", device=device, is_peft_model=False) # boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa

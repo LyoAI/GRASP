@@ -28,7 +28,8 @@ class EvalLM(BaseLM):
         assert isinstance(batch_size, int)
 
         self._device = torch.device(device)
-        self.model = model.to(self.device)
+        # self.model = model.to(self.device)
+        self.model = model
         self.model.eval()
 
         self.tokenizer = tokenizer
@@ -163,7 +164,7 @@ def evaluate_model(
             nlls = []
 
             for i in tqdm(range(nsamples)):
-                batch = testenc[:, (i * lm.seqlen) : ((i + 1) * lm.seqlen)].to(lm.device)
+                batch = testenc[:, (i * lm.seqlen) : ((i + 1) * lm.seqlen)].to(lm.model.device)
                 if is_peft_model:
                     outputs = lm.model.model.model(batch)
                     hidden_states = outputs[0]  # .to(lm.model.lm_head.weight.device)
@@ -173,7 +174,7 @@ def evaluate_model(
                     hidden_states = outputs[0]  # .to(lm.model.lm_head.weight.device)
                     logits = lm.model.lm_head(hidden_states)  # .contiguous()
                 shift_logits = logits[:, :-1, :]  # .contiguous()
-                shift_labels = testenc[:, (i * lm.seqlen) : ((i + 1) * lm.seqlen)][:, 1:].to(lm.device)
+                shift_labels = testenc[:, (i * lm.seqlen) : ((i + 1) * lm.seqlen)][:, 1:].to(lm.model.device)
                 loss_fct = nn.CrossEntropyLoss()
                 loss = loss_fct(
                     shift_logits.view(-1, shift_logits.size(-1)),
