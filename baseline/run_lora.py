@@ -1,4 +1,9 @@
+# SET visible device
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = '6'
+print("CUDA_VISIBLE_DEVICES:", os.environ.get("CUDA_VISIBLE_DEVICES"))
+print("=" * 100)
+
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
@@ -24,7 +29,7 @@ def train(
     model, # layer-wise pruned model
     tokenizer,
     data_path: Optional[str] = 'yahma/alpaca-cleaned',
-    output_dir: Optional[str] = './checkpoint',
+    output_dir: Optional[str] = './checkpoint/lora_tuning',
     # lora hyperparams
     lora_r: int = 128,
     lora_alpha: int = 16,
@@ -36,7 +41,7 @@ def train(
     # training hyperparameters
     batch_size: int = 32,
     mirco_batch_size: int = 4,
-    num_epochs: int = 3,
+    num_epochs: int = 1,
     learning_rate: float = 3e-4,
     max_length: int = 256,
     val_set_size: int = 2000,
@@ -202,14 +207,13 @@ def train(
 
 
 if __name__ == "__main__":
-    import os
-    os.environ["CUDA_VISIBLE_DEVICES"] = "0"
-    model = AutoModelForCausalLM.from_pretrained('meta-llama/Llama-2-7b-hf', token="HuggingfaceToken")
-    tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-2-7b-hf', token="HuggingfaceToken")
+    model_name = 'meta-llama/Llama-3.1-8B-Instruct'
+    model = AutoModelForCausalLM.from_pretrained(model_name, token="HuggingfaceToken")
+    tokenizer = AutoTokenizer.from_pretrained(model_name, token="HuggingfaceToken")
     lora_r = 128
     lora_target_modules = ["q_proj", "v_proj", "k_proj", "o_proj", "down_proj", "up_proj", "gate_proj"]
-    layers_to_remove = [27, 26, 28, 24, 29, 25, 23, 22, 21]
-    device="cuda:0"
+    layers_to_remove = [25, 24, 26, 23, 27, 28, 22, 20, 21]
+    device="cuda:6"
 
     # For simplify, we manually remove the redundant layers found by running run_shortgpt.py
     # remove layers in reverse to avoid indexing errors
@@ -228,4 +232,4 @@ if __name__ == "__main__":
         lora_target_modules=lora_target_modules
     )
 
-    result = evaluate_model(peft_model, tokenizer, model_name="llama", tasks="mathqa,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa", eval_ppl="wikitext2,c4,ptb", device=device, is_peft_model=True) # boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa
+    result = evaluate_model(peft_model, tokenizer, model_name=model_name, tasks="mathqa,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa", eval_ppl="wikitext2,c4,ptb", device=device, is_peft_model=True) # boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa
