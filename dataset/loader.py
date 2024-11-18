@@ -2,8 +2,8 @@ import os
 import random
 import torch
 from datasets import load_dataset
-from typing import Optional, Literal, Union
-from torch.utils.data import Dataset, DataLoader
+from typing import Optional, Literal, Union, List
+from torch.utils.data import Dataset, DataLoader, ConcatDataset
 from transformers import DataCollatorForSeq2Seq
 
 
@@ -14,7 +14,8 @@ def get_calibration_dataloader(
     seq_len: Optional[float] = 2048,
     padding: Optional[Union[str, bool]] = 'max_length',
     batch_size: Optional[int] = 1, # wikitext2: 4
-    seed: Optional[int] = 42  
+    seed: Optional[int] = 42,
+    mix: Optional[bool] = False
 ):
     random.seed(seed)
     data_collator = DataCollatorForSeq2Seq(
@@ -229,7 +230,51 @@ def get_calibration_dataloader(
         raise NotImplementedError
 
     print("=======> Done Loading Data!")
-    return DataLoader(train_dataset, batch_size=batch_size, collate_fn=data_collator, shuffle=True)
+    if mix:
+        return train_dataset
+    else:
+        return DataLoader(train_dataset, batch_size=batch_size, collate_fn=data_collator, shuffle=True)
+    
+
+def get_mix_calibration_dataloader(
+    dataset_names = ["wikitext2", 'openbookqa', 'arc_easy', 'arc_challenge', 'hellaswag', 'winogrande', 'piqa', 'mathqa'],
+    tokenizer = None,
+    num_samples: Optional[int] = 128, # wikitext: 512
+    dataset_proportion: Optional[List[int]] = None,
+    seq_len: Optional[float] = 2048,
+    padding: Optional[Union[str, bool]] = 'max_length',
+    batch_size: Optional[int] = 1, # wikitext2: 4
+    seed: Optional[int] = 42  
+    ):
+    random.seed(seed)
+    data_collator = DataCollatorForSeq2Seq(
+        tokenizer=tokenizer, return_tensors='pt', padding=True
+    )
+    if not tokenizer:
+        raise ValueError("Tokenizer should be given")
+
+    if not dataset_proportion:
+        union_proportion = 1 / len(dataset_names)
+        dataset_proportion = [union_proportion for _ in range(len(dataset_names))]
+
+    train_dataset_list = []
+    for idx, dataset_name in enumerate(dataset_names):
+        current_num_samples = num_samples * dataset_proportion[idx]
+        current_padding = padding if "wikitext2" in dataset_name else False
+
+        train_dataset = get_calibration_dataloader(
+            dataset_name=dataset_name,
+            tokenizer=tokenizer,
+            num_samples=current_num_samples,
+            seq_len=seq_len, 
+            padding=current_padding,
+            batch_size=batch_size, 
+            seed=seed, mix=True
+        )
+        train_dataset_list.append(train_dataset)
+
+    train_datasets = ConcatDataset(train_dataset_list)
+    return DataLoader(train_datasets, batch_size=batch_size, collate_fn=data_collator, shuffle=True)
 
 
 def get_evaluation_dataloader(dataset_name: Literal["wikitext2", "ptb", "c4"], tokenizer):

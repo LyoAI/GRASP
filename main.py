@@ -8,6 +8,7 @@ from dataset.loader import get_calibration_dataloader
 from tools.utils_func import jaccard_similarity
 from torch.utils.data import DataLoader
 from transformers import DataCollatorForSeq2Seq
+from ptflops import get_model_complexity_info
 
 
 if __name__ == "__main__":
@@ -60,3 +61,6 @@ if __name__ == "__main__":
 
     print(f"jaccard_similarity between svd and gsvd in {layer_name}: \n{jaccard_similarity(svd_importance_indices, indices)}")
     print(f"Ratio of svd_importance_values and gsvd_importance_values: \n{svd_importance_values_sum/gsvd_importance_values_sum}")
+
+
+    macs, params = get_model_complexity_info(model=model, input_res=(1, 256), as_strings=True, verbose=True)
