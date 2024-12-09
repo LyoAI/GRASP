@@ -96,9 +96,11 @@ def get_calibration_dataloader(
 
     elif 'c4' in dataset_name:
         train_data = load_dataset(
-            "json",
-            data_files="utils/c4-validation.json"
-        )['train']
+            "allenai/c4",
+            data_files={"train": "en/c4-validation.00000-of-00008.json.gz"},
+            split="train",
+            trust_remote_code=True
+        )
         random_indices = random.sample(range(len(train_data)), num_samples)
         train_data = train_data.select(random_indices)
         train_dataset = process_pretrain_data(train_data, tokenizer, seq_len, 'text')

@@ -73,14 +73,41 @@ class GSVDModel(nn.Module):
 
         self.gsvd_values_dict = {}
     
-    def calculate_layer_compression_ratio(self):
+    def calculate_layer_compression_ratio(self, redundant_layers: Optional[List] = None):
         '''
         calculate module-wise compression ratio
         for module_name, module in self.model.named_modules():
             if isinstance(module, nn.Linear) and "lm_head" not in module_name:
                 module.compression_ratio = self_define_ratio
         '''
-        pass
+        compression_ratios = {}  # To store layer compression ratios for verification/debugging
+        
+        for module_name, module in self.model.named_modules():
+            if isinstance(module, nn.Linear) and "lm_head" not in module_name:
+                # Extract layer index from module_name, assuming a consistent naming pattern
+                layer_index = self._extract_layer_index(module_name)
+                if layer_index is not None:
+                    if layer_index in redundant_layers:
+                        module.compression_ratio = 0.8
+                    else:
+                        module.compression_ratio = 0.1
+                    compression_ratios[module_name] = module.compression_ratio
+        
+        return compression_ratios  # Optional, for debugging
+
+    @staticmethod
+    def _extract_layer_index(module_name):
+        """
+        Extracts the layer index from the module name.
+        Assumes the module name contains the layer index in a consistent format, e.g., 'model.layers.23.mlp'.
+        """
+        try:
+            parts = module_name.split('.')
+            if "layers" in parts:
+                index = int(parts[parts.index("layers") + 1])  # Index after "layers"
+                return index
+        except (ValueError, IndexError):
+            return None
 
     def print_trainable_params(self):
         total_params = sum(p.numel() for p in self.parameters())
@@ -242,7 +269,11 @@ class GSVDModel(nn.Module):
                 module = self.model.get_submodule(target_layer)
                 if isinstance(module, nn.Linear):
                     compression_ratio = getattr(module, "compression_ratio", None)
-                    compression_ratio = compression_ratio.cpu().item() if compression_ratio is not None else None
+                    if compression_ratio is not None:
+                        if isinstance(compression_ratio, torch.Tensor):
+                            compression_ratio = compression_ratio.cpu().item()
+                    else:
+                        compression_ratio = None
                     compression_ratio_list.append(compression_ratio)
                     if compression_ratio == 0:
                         continue

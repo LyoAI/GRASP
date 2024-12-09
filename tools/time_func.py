@@ -44,7 +44,6 @@ def test_inference_performance(model, tokenizer, device: Literal["cuda", "cpu"] 
 
 
 
-
 if __name__ == '__main__':
     model = AutoModelForCausalLM.from_pretrained('meta-llama/Llama-2-7b-hf', token="HuggingfaceToken")
     tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-2-7b-hf', token="HuggingfaceToken")
