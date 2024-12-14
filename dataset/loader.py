@@ -307,3 +307,42 @@ def get_evaluation_dataloader(dataset_name: Literal["wikitext2", "ptb", "c4"], t
         testenc = tokenizer("\n\n".join(testdata["text"]), return_tensors="pt")
         return testenc
     raise NotImplementedError
+
+def get_test_data(name, tokenizer, seq_len=2048, batch_size = 4):
+    class IndexDataset(Dataset):
+        def __init__(self, tensors):
+            self.tensors = tensors
+
+        def __getitem__(self, index):
+            return self.tensors[index]
+
+        def __len__(self):
+            return len(self.tensors)
+    ####
+    def process_data(samples, tokenizer, seq_len, field_name):
+        test_ids = tokenizer("\n\n".join(samples[field_name]), return_tensors='pt').input_ids[0]
+        test_ids_batch = []
+        nsamples = test_ids.numel() // seq_len
+
+        for i in range(nsamples):
+            batch = test_ids[(i * seq_len):((i + 1) * seq_len)]
+            test_ids_batch.append(batch)
+        test_ids_batch = torch.stack(test_ids_batch)
+        return IndexDataset(tensors=test_ids_batch)
+    ####
+    if 'wikitext2' in name:
+        test_data = load_dataset('wikitext', 'wikitext-2-raw-v1', split='test')
+        test_dataset = process_data(test_data, tokenizer, seq_len, 'text')
+    if 'ptb' in name:
+        test_data = load_dataset('ptb_text_only', 'penn_treebank', split='test')
+        test_dataset = process_data(test_data, tokenizer, seq_len, 'sentence')
+    elif 'c4' in name:
+        test_data = load_dataset(
+            "allenai/c4",
+            data_files={"validation": "en/c4-validation.00000-of-00008.json.gz"},
+            split="train",
+            trust_remote_code=True
+        )
+        test_dataset = process_data(test_data[0:2000], tokenizer, seq_len, 'text')
+    test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
+    return test_loader
