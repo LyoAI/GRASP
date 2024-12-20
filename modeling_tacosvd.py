@@ -44,9 +44,9 @@ class SVDLinear(nn.Module):
         return output
 
 
-class GSVDLayer(nn.Module):
+class TacoSVDLayer(nn.Module):
     def __init__(self, U: torch.Tensor, S: torch.Tensor, Vh: torch.Tensor, bias: Optional[torch.Tensor], compression_ratio: Optional[float]):
-        super(GSVDLayer, self).__init__()
+        super(TacoSVDLayer, self).__init__()
         self.U = nn.Parameter(U.clone().detach().requires_grad_(False))
         self.S = nn.Parameter(S.clone().detach().requires_grad_(True))
         self.Vh = nn.Parameter(Vh.clone().detach().requires_grad_(False))
@@ -64,14 +64,14 @@ class GSVDLayer(nn.Module):
         return torch.mm(x.view(b*s, -1), W_reconstructed.t()).view(b, s, -1)
 
 
-class GSVDModel(nn.Module):
+class TacoSVDModel(nn.Module):
     def __init__(self, model: nn.Module, *args, **kwargs) -> None:
-        super(GSVDModel, self).__init__(*args, **kwargs)
+        super(TacoSVDModel, self).__init__(*args, **kwargs)
         self.model = model
         for params in self.model.parameters():
             params.requires_grad = False
 
-        self.gsvd_values_dict = {}
+        self.tacosvd_values_dict = {}
     
     def calculate_layer_compression_ratio(self, redundant_layers: Optional[List] = None):
         '''
@@ -80,26 +80,27 @@ class GSVDModel(nn.Module):
             if isinstance(module, nn.Linear) and "lm_head" not in module_name:
                 module.compression_ratio = self_define_ratio
         '''
-        compression_ratios = {}  # To store layer compression ratios for verification/debugging
+        # compression_ratios = {}  # To store layer compression ratios for verification/debugging
         
-        for module_name, module in self.model.named_modules():
-            if isinstance(module, nn.Linear) and "lm_head" not in module_name:
-                # Extract layer index from module_name, assuming a consistent naming pattern
-                layer_index = self._extract_layer_index(module_name)
-                if layer_index is not None:
-                    if layer_index in redundant_layers:
-                        module.compression_ratio = 0.8
-                    else:
-                        module.compression_ratio = 0.1
-                    compression_ratios[module_name] = module.compression_ratio
+        # for module_name, module in self.model.named_modules():
+        #     if isinstance(module, nn.Linear) and "lm_head" not in module_name:
+        #         # Extract layer index from module_name, assuming a consistent naming pattern
+        #         layer_index = self._extract_layer_index(module_name)
+        #         if layer_index is not None:
+        #             if layer_index in redundant_layers:
+        #                 module.compression_ratio = 0.8
+        #             else:
+        #                 module.compression_ratio = 0.1
+        #             compression_ratios[module_name] = module.compression_ratio
         
-        return compression_ratios  # Optional, for debugging
+        # return compression_ratios  # Optional, for debugging
+        pass
 
     @staticmethod
     def _extract_layer_index(module_name):
         """
         Extracts the layer index from the module name.
-        Assumes the module name contains the layer index in a consistent format, e.g., 'model.layers.23.mlp'.
+        Supposes the module name contains the layer index in a consistent format, e.g., 'model.layers.23.mlp'.
         """
         try:
             parts = module_name.split('.')
@@ -203,7 +204,7 @@ class GSVDModel(nn.Module):
             sub_model = getattr(sub_model, token)
         setattr(sub_model, tokens[-1], module)
 
-    def replace_with_GSVDLayer(self, target_layer: str, device: Literal["cuda", "cpu"] = "cuda"):
+    def replace_with_TacoSVDLayer(self, target_layer: str, device: Literal["cuda", "cpu"] = "cuda"):
         replace_flag = False
         module = self.model.get_submodule(target=target_layer)
         if isinstance(module, nn.Linear):
@@ -212,13 +213,13 @@ class GSVDModel(nn.Module):
 
             bias = module.bias
             compression_ratio = getattr(module, "compression_ratio", None)
-            gsvd_layer = GSVDLayer(U=U, S=S, Vh=Vh, bias=bias, compression_ratio=compression_ratio)
-            self._set_module(self.model, target_layer, gsvd_layer)
+            tacosvd_layer = TacoSVDLayer(U=U, S=S, Vh=Vh, bias=bias, compression_ratio=compression_ratio)
+            self._set_module(self.model, target_layer, tacosvd_layer)
             replace_flag = True
         else:
             raise TypeError(f"target layer should be of Linear module, but got {type(module)}")
         if not replace_flag:
-            print(f"failed to replace with GSVDLayer, target layer: {target_layer} not found in model")
+            print(f"failed to replace with TacoSVDLayer, target layer: {target_layer} not found in model")
             return
     
     def compress_block(
@@ -231,7 +232,7 @@ class GSVDModel(nn.Module):
             verbose: bool  = False
         ):
         '''
-        Compress transformer-based LLM within a transformer block using GSVD
+        Compress transformer-based LLM within a transformer block using TacoSVD
         '''
         if layer_id is None:
             raise ValueError("Layer id should be given, but got None")
@@ -278,44 +279,44 @@ class GSVDModel(nn.Module):
                     if compression_ratio == 0:
                         continue
                     else:
-                        self.replace_with_GSVDLayer(target_layer=target_layer, device=device)
+                        self.replace_with_TacoSVDLayer(target_layer=target_layer, device=device)
             if np.all(np.array(compression_ratio_list) == 0):
                 return True
         else:
             for target_layer in target_layer_names:
-                self.replace_with_GSVDLayer(target_layer=target_layer, device=device)
+                self.replace_with_TacoSVDLayer(target_layer=target_layer, device=device)
         
         if verbose:
             print(self)
         
         return
     
-    def compute_preserve_rank(self, gsvd_layer: GSVDLayer, compression_ratio: float):
+    def compute_preserve_rank(self, tacosvd_layer: TacoSVDLayer, compression_ratio: float):
         if compression_ratio is None:
             raise ValueError("Compression ratio should not be None")
-        in_features = gsvd_layer.in_features
-        out_features = gsvd_layer.out_features
+        in_features = tacosvd_layer.in_features
+        out_features = tacosvd_layer.out_features
         k = int(in_features * out_features * (1 - compression_ratio) / (in_features + out_features))
         return k
 
-    def check_exists_gsvd_layer(self):
-        gsvd_layer_names = []
+    def check_exists_tacosvd_layer(self):
+        tacosvd_layer_names = []
         for name, module in self.model.named_modules():
-            if isinstance(module, GSVDLayer):
-                gsvd_layer_names.append(name)
+            if isinstance(module, TacoSVDLayer):
+                tacosvd_layer_names.append(name)
                 continue
-        if not gsvd_layer_names:
-            print("GSVDLayer not found in current model, please use GSVDModel.replace_with_GSVDLayer first")
+        if not tacosvd_layer_names:
+            print("TacoSVDLayer not found in current model, please use TacoSVDModel.replace_with_TacoSVDLayer first")
 
-        return gsvd_layer_names
+        return tacosvd_layer_names
 
     def get_svdlayer_gradients(self, calibration_dataloader: DataLoader, device: Literal["cuda:0", "cpu"] = "cuda:0", *args, **kwargs):
-        gsvd_layer_names = self.check_exists_gsvd_layer()
-        if gsvd_layer_names is None:
-            raise NotImplementedError("GSVDLayer not found, can not compute gradients, please use GSVDModel.replace_with_GSVDLayer first")
+        tacosvd_layer_names = self.check_exists_tacosvd_layer()
+        if tacosvd_layer_names is None:
+            raise NotImplementedError("TacoSVDLayer not found, can not compute gradients, please use TacoSVDModel.replace_with_TacoSVDLayer first")
 
         iterator = tqdm(calibration_dataloader, desc="Gradients Collection", total=len(calibration_dataloader), leave=True)
-        gsvd_layer_grads = {}
+        tacosvd_layer_grads = {}
         self.model.to(device=device)
         for batch_idx, batch in enumerate(iterator):
             if len(batch) == 2:
@@ -333,21 +334,21 @@ class GSVDModel(nn.Module):
             # backpropogation
             loss.backward()
 
-            for gsvd_layer_name in gsvd_layer_names:
-                module: GSVDLayer = self.model.get_submodule(gsvd_layer_name)
+            for tacosvd_layer_name in tacosvd_layer_names:
+                module: TacoSVDLayer = self.model.get_submodule(tacosvd_layer_name)
                 if not module:
                     raise ValueError("module can not found")
-                if gsvd_layer_name not in gsvd_layer_grads:
-                    gsvd_layer_grads[gsvd_layer_name] = module.S.grad
+                if tacosvd_layer_name not in tacosvd_layer_grads:
+                    tacosvd_layer_grads[tacosvd_layer_name] = module.S.grad
                 else:
-                    gsvd_layer_grads[gsvd_layer_name] += module.S.grad
+                    tacosvd_layer_grads[tacosvd_layer_name] += module.S.grad
 
             if "cuda" in device:
                 torch.cuda.empty_cache()
 
-        self.gsvd_layer_grads = gsvd_layer_grads
+        self.tacosvd_layer_grads = tacosvd_layer_grads
 
-        return gsvd_layer_grads
+        return tacosvd_layer_grads
     
     def naive_svd_selection(
         self,
@@ -358,64 +359,64 @@ class GSVDModel(nn.Module):
             For testing
             It will be deprecated after testing on all benchmarks
         '''
-        gsvd_layer_names = self.check_exists_gsvd_layer()
-        if not gsvd_layer_names:
+        tacosvd_layer_names = self.check_exists_tacosvd_layer()
+        if not tacosvd_layer_names:
             raise NotImplementedError("please perform svd first")
         
         compression_ratio =  compression_ratio if compression_ratio is not None else 0.2
         indices_dict = {}
 
-        for gsvd_layer_name in gsvd_layer_names:
-            gsvd_layer: GSVDLayer = self.model.get_submodule(gsvd_layer_name)
-            S = gsvd_layer.S
-            k = self.compute_preserve_rank(gsvd_layer, compression_ratio=compression_ratio)
+        for tacosvd_layer_name in tacosvd_layer_names:
+            tacosvd_layer: TacoSVDLayer = self.model.get_submodule(tacosvd_layer_name)
+            S = tacosvd_layer.S
+            k = self.compute_preserve_rank(tacosvd_layer, compression_ratio=compression_ratio)
             _, indices = torch.topk(S, k=k)
-            indices_dict[gsvd_layer_name] = indices
+            indices_dict[tacosvd_layer_name] = indices
 
         return indices_dict
 
     def dynamic_svd_selection(
             self,
-            gsvd_layer_grads: dict,
+            tacosvd_layer_grads: dict,
             metric: Literal["gradient", "taylor"] = "taylor",
             compression_ratio: Optional[float] = None,
             threshold_ratio: Optional[float] = None,
         ):
-        if not gsvd_layer_grads:
-            gsvd_layer_grads = self.gsvd_layer_grads
-            raise ValueError("gradients of gsvd_layer should be given, but got None")
+        if not tacosvd_layer_grads:
+            tacosvd_layer_grads = self.tacosvd_layer_grads
+            raise ValueError("gradients of tacosvd_layer should be given, but got None")
 
         indices_dict = {}
 
-        for gsvd_layer_name, gsvd_layer_grad in gsvd_layer_grads.items():
-            gsvd_layer: GSVDLayer = self.model.get_submodule(gsvd_layer_name)
-            S = gsvd_layer.S
+        for tacosvd_layer_name, tacosvd_layer_grad in tacosvd_layer_grads.items():
+            tacosvd_layer: TacoSVDLayer = self.model.get_submodule(tacosvd_layer_name)
+            S = tacosvd_layer.S
 
             if metric == "gradient":
-                svd_importance: torch.Tensor = torch.abs(gsvd_layer_grad)
+                svd_importance: torch.Tensor = torch.abs(tacosvd_layer_grad)
             elif metric == "taylor":
-                svd_importance: torch.Tensor = torch.abs(gsvd_layer_grad * S)
+                svd_importance: torch.Tensor = torch.abs(tacosvd_layer_grad * S)
             else:
                 raise RuntimeError(f"{metric} not support")
 
-            if gsvd_layer.compression_ratio is not None:
-                compression_ratio = gsvd_layer.compression_ratio
+            if tacosvd_layer.compression_ratio is not None:
+                compression_ratio = tacosvd_layer.compression_ratio
 
             if compression_ratio is not None:            
-                k = self.compute_preserve_rank(gsvd_layer, compression_ratio=compression_ratio)
+                k = self.compute_preserve_rank(tacosvd_layer, compression_ratio=compression_ratio)
                 _, indices = torch.topk(svd_importance, k=k)
             else:
                 assert threshold_ratio, "Please provide Taylor threshold to select rank adaptively"
                 indices = adaptive_rank_selection(svd_importance_list=svd_importance, target_ratio=threshold_ratio)
-            indices_dict[gsvd_layer_name] = indices
-            self.gsvd_values_dict[gsvd_layer_name] = {}
-            self.gsvd_values_dict[gsvd_layer_name]["svd_importance"] = torch.round(svd_importance.cpu(), decimals=3).tolist()
-            self.gsvd_values_dict[gsvd_layer_name]["svd_value"] = torch.round(S.data.cpu(), decimals=3).tolist()
+            indices_dict[tacosvd_layer_name] = indices
+            self.tacosvd_values_dict[tacosvd_layer_name] = {}
+            self.tacosvd_values_dict[tacosvd_layer_name]["svd_importance"] = torch.round(svd_importance.cpu(), decimals=3).tolist()
+            self.tacosvd_values_dict[tacosvd_layer_name]["svd_value"] = torch.round(S.data.cpu(), decimals=3).tolist()
 
         self.indices_dict = indices_dict
         return indices_dict
 
-    def compile_gsvd_model(
+    def compile_tacosvd_model(
         self,
         indices_dict: Optional[dict] = None,
         merge: Optional[bool] = False,
@@ -427,21 +428,21 @@ class GSVDModel(nn.Module):
 
         rank_dict = {}
 
-        for gsvd_layer_name, indices in indices_dict.items():
-            gsvd_layer: GSVDLayer = self.model.get_submodule(gsvd_layer_name)
+        for tacosvd_layer_name, indices in indices_dict.items():
+            tacosvd_layer: TacoSVDLayer = self.model.get_submodule(tacosvd_layer_name)
 
-            S = gsvd_layer.S[indices]
-            U = gsvd_layer.U[:, indices]
-            Vh = gsvd_layer.Vh[indices, :]
-            bias = gsvd_layer.bias
+            S = tacosvd_layer.S[indices]
+            U = tacosvd_layer.U[:, indices]
+            Vh = tacosvd_layer.Vh[indices, :]
+            bias = tacosvd_layer.bias
 
-            rank_dict[gsvd_layer_name] = S.shape[0]
+            rank_dict[tacosvd_layer_name] = S.shape[0]
 
             if merge:
                 in_features = Vh.shape[1]
                 out_features = U.shape[0]
-                self._set_module(self.model, gsvd_layer_name, nn.Linear(in_features=in_features, out_features=out_features, bias=True if bias is not None else False))
-                linear_layer: nn.Linear = self.model.get_submodule(gsvd_layer_name)
+                self._set_module(self.model, tacosvd_layer_name, nn.Linear(in_features=in_features, out_features=out_features, bias=True if bias is not None else False))
+                linear_layer: nn.Linear = self.model.get_submodule(tacosvd_layer_name)
 
                 # re-initialize linear weight and bias
                 W_compressed = torch.mm(U, torch.mm(torch.diag(S), Vh))
@@ -452,11 +453,11 @@ class GSVDModel(nn.Module):
                 
                 linear_layer.requires_grad_(False)
             else:
-                self._set_module(self.model, gsvd_layer_name, SVDLinear(U=U, S=S, Vh=Vh, bias=bias, sigma_fuse=sigma_fuse))
-                svd_linear_layer: SVDLinear = self.model.get_submodule(gsvd_layer_name)
+                self._set_module(self.model, tacosvd_layer_name, SVDLinear(U=U, S=S, Vh=Vh, bias=bias, sigma_fuse=sigma_fuse))
+                svd_linear_layer: SVDLinear = self.model.get_submodule(tacosvd_layer_name)
                 svd_linear_layer.requires_grad_(False)
             
-            del gsvd_layer
+            del tacosvd_layer
             if "cuda" in device:
                 torch.cuda.empty_cache()
         return
