@@ -14,13 +14,13 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import DataCollatorForSeq2Seq
 from datasets import load_dataset
 from prompter import Prompter
-from evaluate_tacosvd import evaluate_model
+from evaluate_grasp import evaluate_model
 
 
 # Train function refer to Alpaca-Lora
 def train(
     # model params
-    tacosvd_model: torch.nn.Module, #TacoSVDModel
+    grasp_model: torch.nn.Module, #GRASPModel
     tokenizer,
     data_path: Optional[str] = 'yahma/alpaca-cleaned',
     output_dir: Optional[str] = './checkpoint',
@@ -38,8 +38,8 @@ def train(
     **kwargs
 ):
     print(
-        f"Finetuning TacoSVD model with params:\n"
-        f"base_model: {tacosvd_model}\n"
+        f"Finetuning GRASP model with params:\n"
+        f"base_model: {grasp_model}\n"
         f"data_path: {data_path}\n"
         f"output_dir: {output_dir}\n"
         f"batch_size: {batch_size}\n"
@@ -57,21 +57,21 @@ def train(
 
     # model initialization    
     # frozen all layers first
-    for param in tacosvd_model.parameters():
+    for param in grasp_model.parameters():
         param.requires_grad_(False)
 
     # set trainable paramters
-    redundant_layers = getattr(tacosvd_model, "redundant_layers", None)
+    redundant_layers = getattr(grasp_model, "redundant_layers", None)
     if redundant_layers is None:
-        redundant_layers = kwargs.get("redundant_layers", [i for i in range(len(tacosvd_model.model.model.layers))])
+        redundant_layers = kwargs.get("redundant_layers", [i for i in range(len(grasp_model.model.model.layers))])
     
     for layer_idx in redundant_layers:
-        layer: nn.Module = tacosvd_model.model.model.layers[layer_idx]
+        layer: nn.Module = grasp_model.model.model.layers[layer_idx]
         for param in layer.parameters():
             param.requires_grad_(True)
 
-    total_params = sum(p.numel() for p in tacosvd_model.parameters())
-    trainable_params = sum(p.numel() for p in tacosvd_model.parameters() if p.requires_grad)
+    total_params = sum(p.numel() for p in grasp_model.parameters())
+    trainable_params = sum(p.numel() for p in grasp_model.parameters() if p.requires_grad)
     trainable_percentage = (trainable_params / total_params) * 100
     print(f"trainable params: {trainable_params} || all params: {total_params} || trainable: {trainable_percentage:.2f}%")
 
@@ -136,7 +136,7 @@ def train(
         # The two files above have a different name depending on how they were saved, but are actually the same.
         if os.path.exists(checkpoint_name):
             print(f"Restarting from {checkpoint_name}")
-            tacosvd_model = torch.load(checkpoint_name)
+            grasp_model = torch.load(checkpoint_name)
         else:
             print(f"Checkpoint {checkpoint_name} not found")
 
@@ -156,7 +156,7 @@ def train(
         val_data = None
     
     trainer = Trainer(
-        model=tacosvd_model.model,
+        model=grasp_model.model,
         train_dataset=train_data,
         eval_dataset=val_data,
         args=TrainingArguments(
@@ -183,27 +183,4 @@ def train(
     )
     trainer.train(resume_from_checkpoint=resume_from_checkpoint)
 
-    return tacosvd_model
-
-
-
-if __name__ == "__main__":
-    # SET torch.device 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    # model initialization
-    output_dir="./checkpoint/svd_tuning/1_epoch"
-    tacosvd_model = torch.load("/home/zhangyong203/TacoSVD/checkpoint/naive_svd_meta-llama-Llama-2-7b-hf.pth", weights_only=False, map_location="cpu")
-    tacosvd_model.redundant_layers = [27, 26, 28, 24, 29, 25, 23, 22, 21]
-    tokenizer = AutoTokenizer.from_pretrained('meta-llama/Llama-2-7b-hf', token="HuggingfaceToken")
-
-    # visible cuda
-    tacosvd_model = train(
-        tacosvd_model=tacosvd_model,
-        tokenizer=tokenizer,
-        output_dir=output_dir,
-        num_epochs=1
-    )
-    model_id: str = tacosvd_model.model.config._name_or_path
-    torch.save(tacosvd_model, os.path.join(output_dir, f"{model_id.replace('/', '-')}.pth"))
-
-    result = evaluate_model(tacosvd_model.model, tokenizer, model_name="llama", tasks="mathqa,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa", eval_ppl="wikitext2,c4,ptb", device=device, is_peft_model=False) # boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa
+    return grasp_model
