@@ -5,7 +5,7 @@ import torch.nn as nn
 import numpy as np
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from dataset.loader import get_calibration_dataloader
-from evaluate_gsvd import evaluate_model
+from evaluate_grasp import evaluate_model
 from typing import Optional, List, Literal
 from torch.utils.data import DataLoader
 from tqdm import tqdm

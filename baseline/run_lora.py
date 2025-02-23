@@ -19,7 +19,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import DataCollatorForSeq2Seq
 from datasets import load_dataset
 from prompter import Prompter
-from evaluate_tacosvd import evaluate_model
+from evaluate_grasp import evaluate_model
 
 
 # Train function refer to Alpaca-Lora

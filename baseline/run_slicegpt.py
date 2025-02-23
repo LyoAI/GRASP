@@ -33,14 +33,3 @@ def run_evaluate_slicegpt(
     model_adapter.model.tie_weights = lambda: None
 
     evaluate_model(model_adapter.model, tokenizer, model_name=model_name, tasks="", eval_ppl="wikitext2", device=device) # boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa
-
-
-if __name__ == "__main__":
-    run_evaluate_slicegpt(
-        model_name="llama",
-        huggingface_model_path="meta-llama/Llama-2-7b-hf",
-        hf_token="HuggingfaceToken",
-        sliced_model_path="/home/zhangyong203/GSVD/checkpoint/",
-        sparsity=0.27,
-        device="cuda:2"
-    )

@@ -4,7 +4,7 @@ import torch.nn as nn
 import numpy as np
 from copy import deepcopy
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from evaluate_gsvd import evaluate_model
+from evaluate_grasp import evaluate_model
 
 
 def merge_layers_return_model(model, merge_base_lay, merge_layer_num):

@@ -15,9 +15,6 @@ def test_inference_performance(model, tokenizer, device: Literal["cuda", "cpu"] 
     - MACS: plus + multiply as a computational unit, test how much MACS need for 1 sample 
     '''
     input_size = (1, 512)
-    input_ids = torch.randint(0, tokenizer.vocab_size, input_size)
-    num_runs = 10
-    total_time = 0.0
 
     model.to(device=device)
     with torch.no_grad():

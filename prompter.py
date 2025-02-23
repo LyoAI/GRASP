@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Union, Optional
+from typing import Optional
 
 class Prompter(object):
     def __init__(self, template_name: Optional[str] = None, verbose: bool = False) -> None:
