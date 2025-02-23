@@ -1,7 +1,6 @@
 import os
 import torch
 import torch.nn as nn
-import numpy as np
 from tqdm import tqdm
 from lm_eval.base import BaseLM
 from lm_eval import evaluator

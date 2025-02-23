@@ -13,7 +13,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM, AutoConfig
 from transformers import DataCollatorForSeq2Seq
 from datasets import load_dataset
 from prompter import Prompter
-from evaluate_gsvd import evaluate_model
+from evaluate_grasp import evaluate_model
 
 
 class FFN(nn.Module):
