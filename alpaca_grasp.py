@@ -1,9 +1,8 @@
 # SET visible device
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = '0'
-print("CUDA_VISIBLE_DEVICES:", os.environ.get("CUDA_VISIBLE_DEVICES"))
-print("=" * 100)
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+import logging
 # strange bugs, to enable setting visble device, have to import torch after setting cuda_visible_device
 import torch
 import torch.nn as nn
@@ -14,7 +13,17 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import DataCollatorForSeq2Seq
 from datasets import load_dataset
 from prompter import Prompter
-from evaluate_grasp import evaluate_model
+
+logger = logging.getLogger(__name__)
+
+def setup_logger(log_file=None):
+    logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    if log_file:
+        handler = logging.FileHandler(log_file)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 
 # Train function refer to Alpaca-Lora
@@ -35,9 +44,11 @@ def train(
     add_eos_token: bool = False,
     resume_from_checkpoint: Optional[str] = None,
     prompt_template_name: str = "alpaca",
+    log_file: Optional[str] = None,
     **kwargs
 ):
-    print(
+    setup_logger(log_file)
+    logger.info(
         f"Finetuning GRASP model with params:\n"
         f"base_model: {grasp_model}\n"
         f"data_path: {data_path}\n"
@@ -73,7 +84,7 @@ def train(
     total_params = sum(p.numel() for p in grasp_model.parameters())
     trainable_params = sum(p.numel() for p in grasp_model.parameters() if p.requires_grad)
     trainable_percentage = (trainable_params / total_params) * 100
-    print(f"trainable params: {trainable_params} || all params: {total_params} || trainable: {trainable_percentage:.2f}%")
+    logger.info(f"trainable params: {trainable_params} || all params: {total_params} || trainable: {trainable_percentage:.2f}%")
 
 
     # tokenizer initialization and tokenize inputs for training

@@ -1,0 +1,14 @@
+baseline/
+checkpoint/
+cache/
+
+*.pth
+*.pt
+*.json
+*.jsonl
+*.jsonl.gz
+*.jsonl.gz.part
+*.jsonl.gz.part.
+
+.vscode/
+.logs/

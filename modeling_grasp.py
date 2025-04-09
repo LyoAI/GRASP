@@ -1,4 +1,5 @@
 import torch
+import logging
 import numpy as np
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -6,6 +7,16 @@ from tqdm import tqdm
 from typing import Literal, Optional, List, Union
 from tools.utils_func import block_influence, adaptive_rank_selection
 
+logger = logging.getLogger(__name__)
+
+def setup_logger(log_file=None):
+    logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    if log_file:
+        handler = logging.FileHandler(log_file)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 class SVDLinear(nn.Module):
     def __init__(self, U: torch.Tensor, S: torch.Tensor, Vh: torch.Tensor, bias: Optional[torch.Tensor], sigma_fuse: Literal["UV", "U", "V"] = "UV"):
@@ -114,7 +125,7 @@ class GRASPModel(nn.Module):
         total_params = sum(p.numel() for p in self.parameters())
         trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
         trainable_percentage = (trainable_params / total_params) * 100
-        print(f"trainable params: {trainable_params} || all params: {total_params} || trainable: {trainable_percentage:.2f}%")
+        logger.info(f"trainable params: {trainable_params} || all params: {total_params} || trainable: {trainable_percentage:.2f}%")
     
     def compute_bi(
             self,
@@ -148,7 +159,7 @@ class GRASPModel(nn.Module):
                     angular=angular
                 ).mean().cpu().item()
 
-        print(f"=======>Compute Block Influence")
+        logger.info("=======>Compute Block Influence")
         assert hiddens is not None or calibration_dataloader is not None, "please provide hidden_states or calibration dataloader to compute block influence"
         if hiddens is not None:
             compute_bi_hiddens(hiddens=hiddens)
@@ -190,7 +201,7 @@ class GRASPModel(nn.Module):
                 try:
                     del self.model.model.layers[layer_idx]
                 except IndexError:
-                    print(f"layer {layer_idx} does not exist, function may have already been called")
+                    logger.info(f"layer {layer_idx} does not exist, function may have already been called")
                     return []
             
             return layers_to_remove
@@ -219,7 +230,7 @@ class GRASPModel(nn.Module):
         else:
             raise TypeError(f"target layer should be of Linear module, but got {type(module)}")
         if not replace_flag:
-            print(f"failed to replace with GRASPLayer, target layer: {target_layer} not found in model")
+            logger.info(f"failed to replace with GRASPLayer, target layer: {target_layer} not found in model")
             return
     
     def compress_block(
@@ -287,7 +298,7 @@ class GRASPModel(nn.Module):
                 self.replace_with_GRASPLayer(target_layer=target_layer, device=device)
         
         if verbose:
-            print(self)
+            logger.info(self)
         
         return
     
@@ -306,7 +317,7 @@ class GRASPModel(nn.Module):
                 grasp_layer_names.append(name)
                 continue
         if not grasp_layer_names:
-            print("GRASPLayer not found in current model, please use GRASPModel.replace_with_GRASPLayer first")
+            logger.info("GRASPLayer not found in current model, please use GRASPModel.replace_with_GRASPLayer first")
 
         return grasp_layer_names
 

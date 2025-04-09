@@ -1,3 +1,4 @@
+# modified from https://github.com/hahnyuan/ASVD4LLM
 import os
 import torch
 import torch.nn as nn
@@ -6,6 +7,18 @@ from lm_eval.base import BaseLM
 from lm_eval import evaluator
 from typing import Optional, Literal
 from dataset.loader import get_evaluation_dataloader
+import logging
+
+logger = logging.getLogger(__name__)
+
+def setup_logger(log_file=None):
+    logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    if log_file:
+        handler = logging.FileHandler(log_file)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 
 class EvalLM(BaseLM):
@@ -108,9 +121,9 @@ def evaluate_perplexity(model, dataset, limit, device: Optional[Literal["cuda", 
         neg_log_likelihood = loss.float() * seqlen
         nlls.append(neg_log_likelihood)
     ppl = torch.exp(torch.stack(nlls).sum() / (len(nlls) * seqlen))
-    print("PPL: {}".format(ppl.item()))
+    logger.info("PPL: %s", ppl.item())
     if device == "cuda":
-        print("Weight Memory: {} MiB\n".format(torch.cuda.memory_allocated()/1024/1024))
+        logger.info("Weight Memory: %s MiB\n", torch.cuda.memory_allocated()/1024/1024)
     return ppl.item()
 
 
@@ -119,13 +132,14 @@ def evaluate_model(
     model,
     tokenizer,
     model_name,
-    tasks: Literal["mmlu", "boolq", "piqa", "hellaswag", "winogrande", "arc_easy", "arc_challenge", "openbookqa"],
+    tasks: Literal["boolq", "piqa", "hellaswag", "winogrande", "arc_easy", "arc_challenge", "openbookqa"],
     eval_ppl="",
     num_fewshot=0,
     limit=-1,
     batch_size=1,
     is_peft_model: Optional[bool] = False,
-    device: Literal["cuda", "cpu"] = "cuda"
+    device: Literal["cuda", "cpu"] = "cuda",
+    log_file: Optional[str] = None
 ):
     """
     model: model name
@@ -133,7 +147,11 @@ def evaluate_model(
     tasks: str tasks are split by ,
     num_fewshot: Number of examples in few-shot context
     eval_ppl: str datasets are split by , such as 'wikitext2,ptb,c4'
+    log_file: Path to log file for saving program output
     """
+    # Update logger with new log_file if provided
+    setup_logger(log_file)
+
     lm = EvalLM(model, tokenizer, batch_size=batch_size, device=device)
     results = {}
     if eval_ppl:
@@ -141,11 +159,10 @@ def evaluate_model(
             cache_testloader = f"/tmp/{dataset}_testloader_{model_name.replace('/', '_')}_all.cache"
             if os.path.exists(cache_testloader):
                 testloader = torch.load(cache_testloader, weights_only=False)
-                print(f"load benchmark from {cache_testloader}")
+                logger.info("load benchmark from %s", cache_testloader)
             else:
                 testloader = get_evaluation_dataloader(dataset, tokenizer)
                 torch.save(testloader, cache_testloader)
-            # print(dataset)
             testenc = testloader.input_ids
             nsamples = testenc.numel() // lm.seqlen
             if is_peft_model:
@@ -162,13 +179,13 @@ def evaluate_model(
                 batch = testenc[:, (i * lm.seqlen) : ((i + 1) * lm.seqlen)].to(lm.device)
                 if is_peft_model:
                     outputs = lm.model.model.model(batch)
-                    hidden_states = outputs[0]  # .to(lm.model.lm_head.weight.device)
-                    logits = lm.model.model.lm_head(hidden_states)  # .contiguous()
+                    hidden_states = outputs[0]
+                    logits = lm.model.model.lm_head(hidden_states)
                 else:
                     outputs = lm.model.model(batch)
-                    hidden_states = outputs[0]  # .to(lm.model.lm_head.weight.device)
-                    logits = lm.model.lm_head(hidden_states)  # .contiguous()
-                shift_logits = logits[:, :-1, :]  # .contiguous()
+                    hidden_states = outputs[0]
+                    logits = lm.model.lm_head(hidden_states)
+                shift_logits = logits[:, :-1, :]
                 shift_labels = testenc[:, (i * lm.seqlen) : ((i + 1) * lm.seqlen)][:, 1:].to(lm.device)
                 loss_fct = nn.CrossEntropyLoss()
                 loss = loss_fct(
@@ -181,7 +198,7 @@ def evaluate_model(
                     break
 
             ppl = torch.exp(torch.stack(nlls).sum() / (len(nlls) * lm.seqlen))
-            print(dataset, ppl.item())
+            logger.info("%s %s", dataset, ppl.item())
             if is_peft_model:
                 lm.model.model.config.use_cache = use_cache
             else:
@@ -212,8 +229,7 @@ def evaluate_model(
         acc_list = [t_results[key]["acc"] for key in t_results.keys() if "acc" in t_results[key]]
         t_results["mean"] = sum(acc_list) / len(acc_list)
         results.update(t_results)
-        print(results)
-        # print mean
-        print(f"\n\n===== mean acc: {sum(acc_list)/len(acc_list)} =====\n\n")
+        logger.info("%s", results)
+        logger.info("\n\n===== mean acc: %s =====\n\n", sum(acc_list)/len(acc_list))
 
     return results
