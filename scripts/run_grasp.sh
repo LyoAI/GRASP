@@ -32,6 +32,7 @@ python grasp.py \
     --num_fewshot $NUM_FEWSHOT \
     --limit $LIMIT \
     --log_file $LOG_FILE \
+    --train_device $TRAIN_DEVICE \
     ${LAYERS_ID:+--layers_id $LAYERS_ID} \
     ${NUM_PRUNE_LAYERS:+--num_prune_layers $NUM_PRUNE_LAYERS} \
     ${COMPRESSION_RATIO:+--compression_ratio $COMPRESSION_RATIO} \

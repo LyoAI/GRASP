@@ -37,11 +37,12 @@ export TRAIN_ON_INPUTS=false
 export ADD_EOS_TOKEN=false
 export RESUME_FROM_CHECKPOINT=""  # Optional, use empty string for None
 export PROMPT_TEMPLATE_NAME="alpaca"
+export TRAIN_DEVICE="0"
 
 # Evaluation arguments
 export EVALUATE=true
 export EVAL_PPL="wikitext2" # "wikitext2,ptb,c4
-export EVAL_TASKS="boolq" # "boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa"
+export EVAL_TASKS="boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa" # "boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa"
 export NUM_FEWSHOT=0
 export LIMIT=-1
 

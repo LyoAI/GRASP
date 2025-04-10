@@ -44,6 +44,7 @@ def main(
     verbose: Optional[bool] = False,
     recovery: Optional[bool] = True,
     log_file: Optional[str] = None,
+    train_device: Optional[str] = None,
     *args, **kwargs
 ):
     # Setup logger
@@ -142,6 +143,7 @@ def main(
             tokenizer=tokenizer,
             output_dir=os.path.dirname(save_path),
             log_file=log_file,
+            train_device=train_device,
             **kwargs
         )
         # Save the recovered model
@@ -224,6 +226,8 @@ def parse_args():
                       help="Path to checkpoint to resume from")
     parser.add_argument("--prompt_template_name", type=str, default="alpaca",
                       help="Name of prompt template to use")
+    parser.add_argument("--train_device", type=str, default="0",
+                      help="Device to train on")
     
     # evaluation arguments
     parser.add_argument("--evaluate", action="store_true",
@@ -293,6 +297,7 @@ if __name__ == "__main__":
         verbose=args.verbose,
         recovery=args.recovery,
         log_file=args.log_file,
+        train_device=args.train_device,
         **kwargs
     )
 

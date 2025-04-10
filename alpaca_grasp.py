@@ -1,9 +1,7 @@
 # SET visible device
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
-
 import logging
-# strange bugs, to enable setting visble device, have to import torch after setting cuda_visible_device
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset
@@ -44,6 +42,7 @@ def train(
     add_eos_token: bool = False,
     resume_from_checkpoint: Optional[str] = None,
     prompt_template_name: str = "alpaca",
+    train_device: Optional[str] = None, # default on all gpus, set CUDA_VISIBLE_DEVICES to specify which gpu to use
     log_file: Optional[str] = None,
     **kwargs
 ):
@@ -63,6 +62,8 @@ def train(
         f"prompt template: {prompt_template_name}\n"
     )
 
+    if train_device:
+        os.environ["CUDA_VISIBLE_DEVICES"] = train_device
     
     gradient_accumulation_steps = batch_size // mirco_batch_size
 
