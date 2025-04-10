@@ -16,7 +16,7 @@ export SAVE_PATH=""  # Optional, use empty string for None
 export ANGULAR=false
 export ALLOCATION_AWARE=false
 export MERGE=false
-export VERBOSE=false
+export VERBOSE=true
 export RECOVERY=true
 
 # Calibration arguments

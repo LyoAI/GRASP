@@ -361,37 +361,13 @@ class GRASPModel(nn.Module):
 
         return grasp_layer_grads
     
-    def naive_svd_selection(
-        self,
-        compression_ratio: Optional[float] = None
-    ):
-        '''
-        **__naive svd selection__**:
-            For testing
-            It will be deprecated after testing on all benchmarks
-        '''
-        grasp_layer_names = self.check_exists_grasp_layer()
-        if not grasp_layer_names:
-            raise NotImplementedError("please perform svd first")
-        
-        compression_ratio =  compression_ratio if compression_ratio is not None else 0.2
-        indices_dict = {}
-
-        for grasp_layer_name in grasp_layer_names:
-            grasp_layer: GRASPLayer = self.model.get_submodule(grasp_layer_name)
-            S = grasp_layer.S
-            k = self.compute_preserve_rank(grasp_layer, compression_ratio=compression_ratio)
-            _, indices = torch.topk(S, k=k)
-            indices_dict[grasp_layer_name] = indices
-
-        return indices_dict
-
     def dynamic_svd_selection(
             self,
             grasp_layer_grads: dict,
             metric: Literal["gradient", "taylor"] = "taylor",
             compression_ratio: Optional[float] = None,
             threshold_ratio: Optional[float] = None,
+            verbose: Optional[bool] = False
         ):
         if not grasp_layer_grads:
             grasp_layer_grads = self.grasp_layer_grads
@@ -423,6 +399,13 @@ class GRASPModel(nn.Module):
             self.grasp_values_dict[grasp_layer_name] = {}
             self.grasp_values_dict[grasp_layer_name]["svd_importance"] = torch.round(svd_importance.cpu(), decimals=3).tolist()
             self.grasp_values_dict[grasp_layer_name]["svd_value"] = torch.round(S.data.cpu(), decimals=3).tolist()
+
+        if verbose:
+            logger.info("+" * 100)
+            for grasp_layer_name, indices in indices_dict.items():
+                logger.info(f"{grasp_layer_name}")
+                logger.info(indices.detach().cpu().numpy().tolist()[:128])
+            logger.info("+" * 100)
 
         self.indices_dict = indices_dict
         return indices_dict

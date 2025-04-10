@@ -6,14 +6,14 @@
 
 # 🎯Quick Start
 
-## Clone this repo
+## 🔗Clone this repo
 
 ```sh
 git clone https://github.com/LyoAI/GRASP.git
 cd GRASP
 ```
 
-## Install dependencies
+## ⚙️Install dependencies
 
 ```sh
 # step 1: create a virtual environment
@@ -26,17 +26,17 @@ conda activate grasp
 pip install -r requirements.txt
 ```
 
-## Usage
+## ✂️GRASP Compress
 
 1. **Adjust the parameters in `scripts/params_script.sh` to fit your needs.**
 
-2. **Run the GRASP program:**
+2. **Run the GRASP Scripts:**
 
    ```bash
    bash scripts/run_grasp.sh
    ```
 
-## Evaluation
+## 📐Evaluation
 
 **To evaluate the model, use the following script:**
 
