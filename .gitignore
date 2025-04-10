@@ -12,3 +12,13 @@ cache/
 
 .vscode/
 .logs/
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pyw
+*.pyz
+*.pywz
+
+logs/

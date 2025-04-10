@@ -9,9 +9,9 @@ export LAYERS_ID=""  # Optional, use empty string for None
 export NUM_PRUNE_LAYERS=7  # Optional, use empty string for None
 export MLP_TARGET_LAYER_TYPES="down_proj up_proj gate_proj"
 export ATTN_TARGET_LAYER_TYPES="q_proj k_proj v_proj o_proj"
-export METRIC="taylor"
+export METRIC="taylor" # "gradient", "taylor"
 export COMPRESSION_RATIO=0.9  # Optional, use empty string for None
-export DEVICE="cuda"
+export DEVICE="cuda" # cuda:0, cuda:1, etc.
 export SAVE_PATH=""  # Optional, use empty string for None
 export ANGULAR=false
 export ALLOCATION_AWARE=false
@@ -40,10 +40,13 @@ export PROMPT_TEMPLATE_NAME="alpaca"
 
 # Evaluation arguments
 export EVALUATE=true
-export EVAL_PPL="wikitext2"
-export EVAL_TASKS="boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa"
+export EVAL_PPL="wikitext2" # "wikitext2,ptb,c4
+export EVAL_TASKS="boolq" # "boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa"
 export NUM_FEWSHOT=0
 export LIMIT=-1
 
 # Logging arguments
+if [ ! -d logs ]; then
+    mkdir logs
+fi
 export LOG_FILE="logs/grasp.log"

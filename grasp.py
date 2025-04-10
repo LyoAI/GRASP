@@ -84,16 +84,19 @@ def main(
             verbose=verbose, 
             device=device,
             allocation_aware=allocation_aware,
+            log_file=log_file
         ) # replace original linear layer with svd layer
         if not skip_flag:
-            grasp_layer_grads = grasp_model.get_svdlayer_gradients(calibration_dataloader, device) # calculate gradients for each singular values 
+            grasp_layer_grads = grasp_model.get_svdlayer_gradients(calibration_dataloader, device, log_file) # calculate gradients for each singular values 
             indices_dict = grasp_model.dynamic_svd_selection(
                 grasp_layer_grads,
                 metric=metric, 
                 compression_ratio=compression_ratio,
-                threshold_ratio=threshold_ratio
+                threshold_ratio=threshold_ratio,
+                verbose=verbose,
+                log_file=log_file
             ) # gradient based or taylor based attribution
-            grasp_model.compile_grasp_model(indices_dict, merge=merge, device=device) # retain important singular values and compile grasp model
+            grasp_model.compile_grasp_model(indices_dict, merge=merge, device=device, log_file=log_file) # retain important singular values and compile grasp model
         else:
             logger.info("=======> Skip Compressing This Block")
 
@@ -105,16 +108,19 @@ def main(
             verbose=verbose, 
             device=device,
             allocation_aware=allocation_aware,
+            log_file=log_file
         ) # replace original linear layer with svd layer
         if not skip_flag:
-            grasp_layer_grads = grasp_model.get_svdlayer_gradients(calibration_dataloader, device) # calculate gradients for each singular values 
+            grasp_layer_grads = grasp_model.get_svdlayer_gradients(calibration_dataloader, device, log_file) # calculate gradients for each singular values 
             indices_dict = grasp_model.dynamic_svd_selection(
                 grasp_layer_grads,
                 metric=metric, 
                 compression_ratio=compression_ratio,
-                threshold_ratio=threshold_ratio
+                threshold_ratio=threshold_ratio,
+                verbose=verbose,
+                log_file=log_file
             ) # gradient based or taylor based attribution
-            grasp_model.compile_grasp_model(indices_dict, merge=merge, device=device) # retain important singular values and compile grasp model
+            grasp_model.compile_grasp_model(indices_dict, merge=merge, device=device, log_file=log_file) # retain important singular values and compile grasp model
         else:
             logger.info("=======> Skip Compressing This Block")
     

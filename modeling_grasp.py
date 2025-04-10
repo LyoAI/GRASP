@@ -10,6 +10,10 @@ from tools.utils_func import block_influence, adaptive_rank_selection
 logger = logging.getLogger(__name__)
 
 def setup_logger(log_file=None):
+    # Clear existing handlers
+    if logger.hasHandlers():
+        logger.handlers.clear()
+    
     logger.setLevel(logging.INFO)
     handler = logging.StreamHandler()
     if log_file:
@@ -121,7 +125,8 @@ class GRASPModel(nn.Module):
         except (ValueError, IndexError):
             return None
 
-    def print_trainable_params(self):
+    def print_trainable_params(self, log_file: Optional[str] = None):
+        setup_logger(log_file=log_file)
         total_params = sum(p.numel() for p in self.parameters())
         trainable_params = sum(p.numel() for p in self.parameters() if p.requires_grad)
         trainable_percentage = (trainable_params / total_params) * 100
@@ -134,8 +139,10 @@ class GRASPModel(nn.Module):
             hiddens: Optional[List[torch.Tensor]] = None,
             angular: bool = False,
             device: Literal["cpu", "cuda"] = "cuda",
+            log_file: Optional[str] = None,
             *args, **kwargs
         ):
+        setup_logger(log_file=log_file)
         self.layer_importances = [0 for _ in self.model.model.layers]
         """
         Computes layer-wise importances over input tokens.
@@ -215,7 +222,8 @@ class GRASPModel(nn.Module):
             sub_model = getattr(sub_model, token)
         setattr(sub_model, tokens[-1], module)
 
-    def replace_with_GRASPLayer(self, target_layer: str, device: Literal["cuda", "cpu"] = "cuda"):
+    def replace_with_GRASPLayer(self, target_layer: str, device: Literal["cuda", "cpu"] = "cuda", log_file: Optional[str] = None):
+        setup_logger(log_file=log_file)
         replace_flag = False
         module = self.model.get_submodule(target=target_layer)
         if isinstance(module, nn.Linear):
@@ -240,11 +248,13 @@ class GRASPModel(nn.Module):
             target_layer_types: Union[List[str], str] = ["q_proj", "k_proj", "v_proj", "o_proj", "down_proj", "up_proj", "gate_proj"],
             device: Literal["cuda", "cpu"] = "cuda",
             allocation_aware: Optional[bool] = None,
-            verbose: bool  = False
+            verbose: bool  = False,
+            log_file: Optional[str] = None
         ):
         '''
         Compress transformer-based LLM within a transformer block using GRASP
         '''
+        setup_logger(log_file=log_file)
         if layer_id is None:
             raise ValueError("Layer id should be given, but got None")
         
@@ -296,10 +306,6 @@ class GRASPModel(nn.Module):
         else:
             for target_layer in target_layer_names:
                 self.replace_with_GRASPLayer(target_layer=target_layer, device=device)
-        
-        if verbose:
-            logger.info(self)
-        
         return
     
     def compute_preserve_rank(self, grasp_layer: GRASPLayer, compression_ratio: float):
@@ -310,7 +316,8 @@ class GRASPModel(nn.Module):
         k = int(in_features * out_features * (1 - compression_ratio) / (in_features + out_features))
         return k
 
-    def check_exists_grasp_layer(self):
+    def check_exists_grasp_layer(self, log_file: Optional[str] = None):
+        setup_logger(log_file=log_file)
         grasp_layer_names = []
         for name, module in self.model.named_modules():
             if isinstance(module, GRASPLayer):
@@ -321,7 +328,8 @@ class GRASPModel(nn.Module):
 
         return grasp_layer_names
 
-    def get_svdlayer_gradients(self, calibration_dataloader: DataLoader, device: Literal["cuda:0", "cpu"] = "cuda:0", *args, **kwargs):
+    def get_svdlayer_gradients(self, calibration_dataloader: DataLoader, device: Literal["cuda:0", "cpu"] = "cuda:0", log_file: Optional[str] = None, *args, **kwargs):
+        setup_logger(log_file=log_file)
         grasp_layer_names = self.check_exists_grasp_layer()
         if grasp_layer_names is None:
             raise NotImplementedError("GRASPLayer not found, can not compute gradients, please use GRASPModel.replace_with_GRASPLayer first")
@@ -367,8 +375,10 @@ class GRASPModel(nn.Module):
             metric: Literal["gradient", "taylor"] = "taylor",
             compression_ratio: Optional[float] = None,
             threshold_ratio: Optional[float] = None,
-            verbose: Optional[bool] = False
+            verbose: Optional[bool] = False,
+            log_file: Optional[str] = None
         ):
+        setup_logger(log_file=log_file)
         if not grasp_layer_grads:
             grasp_layer_grads = self.grasp_layer_grads
             raise ValueError("gradients of grasp_layer should be given, but got None")
@@ -415,8 +425,10 @@ class GRASPModel(nn.Module):
         indices_dict: Optional[dict] = None,
         merge: Optional[bool] = False,
         sigma_fuse: Literal["UV", "U", "V"] = "UV",
-        device: Literal["cpu", "cuda"] = "cuda"
+        device: Literal["cpu", "cuda"] = "cuda",
+        log_file: Optional[str] = None
     ):
+        setup_logger(log_file=log_file)
         if indices_dict is None:
             indices_dict = self.indices_dict
 
