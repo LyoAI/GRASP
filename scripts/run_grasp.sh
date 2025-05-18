@@ -8,7 +8,7 @@ MLP_TARGET_LAYER_TYPES_STR=$(IFS=,; echo "${MLP_TARGET_LAYER_TYPES[*]}")
 ATTN_TARGET_LAYER_TYPES_STR=$(IFS=,; echo "${ATTN_TARGET_LAYER_TYPES[*]}")
 
 # Run the command with all parameters
-python grasp.py \
+CUDA_VISIBLE_DEVICES=$VISIBLE_DEVICE python grasp.py \
     --model_name_or_path $MODEL_NAME_OR_PATH \
     --dataset_name $DATASET_NAME \
     --mlp_target_layer_types $MLP_TARGET_LAYER_TYPES_STR \
@@ -32,7 +32,6 @@ python grasp.py \
     --num_fewshot $NUM_FEWSHOT \
     --limit $LIMIT \
     --log_file $LOG_FILE \
-    --train_device $TRAIN_DEVICE \
     ${LAYERS_ID:+--layers_id $LAYERS_ID} \
     ${NUM_PRUNE_LAYERS:+--num_prune_layers $NUM_PRUNE_LAYERS} \
     ${COMPRESSION_RATIO:+--compression_ratio $COMPRESSION_RATIO} \

@@ -1,4 +1,3 @@
-# SET visible device
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 import logging
@@ -11,6 +10,7 @@ from transformers import AutoTokenizer, AutoModelForCausalLM
 from transformers import DataCollatorForSeq2Seq
 from datasets import load_dataset
 from prompter import Prompter
+from modeling_grasp import SVDLinear
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,23 @@ def setup_logger(log_file=None):
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
+def merge_svdlayer(model: nn.Module) -> nn.Module:
+    def _replace(module: nn.Module) -> nn.Module:
+        for name, child in module.named_children():
+            if isinstance(child, SVDLinear):
+                W = torch.matmul(child.OutLinear.weight.data, child.InLinear.weight.data)
+                bias = child.OutLinear.bias.data if child.OutLinear.bias is not None else None
+                in_features = child.InLinear.in_features
+                out_features = child.OutLinear.out_features
+                linear = nn.Linear(in_features, out_features, bias=bias is not None)
+                linear.weight.data = W
+                if bias is not None:
+                    linear.bias.data = bias
+                setattr(module, name, linear)
+            else:
+                _replace(child)
+        return module
+    return _replace(model)
 
 # Train function refer to Alpaca-Lora
 def train(
@@ -42,8 +59,8 @@ def train(
     add_eos_token: bool = False,
     resume_from_checkpoint: Optional[str] = None,
     prompt_template_name: str = "alpaca",
-    train_device: Optional[str] = None, # default on all gpus, set CUDA_VISIBLE_DEVICES to specify which gpu to use
     log_file: Optional[str] = None,
+    merge: Optional[bool] = None,
     **kwargs
 ):
     setup_logger(log_file)
@@ -61,9 +78,6 @@ def train(
         f"resume_from_checkpoint: {resume_from_checkpoint or False}\n"
         f"prompt template: {prompt_template_name}\n"
     )
-
-    if train_device:
-        os.environ["CUDA_VISIBLE_DEVICES"] = train_device
     
     gradient_accumulation_steps = batch_size // mirco_batch_size
 
@@ -179,7 +193,7 @@ def train(
             fp16=True,
             logging_steps=10,
             optim="adamw_torch",
-            evaluation_strategy="steps" if val_set_size > 0 else "no",
+            eval_strategy="steps" if val_set_size > 0 else "no",
             save_strategy="steps",
             eval_steps=200 if val_set_size > 0 else None,
             save_steps=200,
@@ -195,4 +209,7 @@ def train(
     )
     trainer.train(resume_from_checkpoint=resume_from_checkpoint)
 
-    return grasp_model
+    if merge:
+        merge_svdlayer(grasp_model.model)
+
+    return grasp_model.model

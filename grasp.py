@@ -10,7 +10,6 @@ import logging
 from modeling_grasp import GRASPModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from alpaca_grasp import train
-from evaluate_grasp import evaluate_model
 from dataset.loader import get_calibration_dataloader
 
 
@@ -44,7 +43,6 @@ def main(
     verbose: Optional[bool] = False,
     recovery: Optional[bool] = True,
     log_file: Optional[str] = None,
-    train_device: Optional[str] = None,
     *args, **kwargs
 ):
     # Setup logger
@@ -127,13 +125,15 @@ def main(
     
     logger.info("=======> Done!")
     if save_path:
-        torch.save(grasp_model, save_path)
+        grasp_model.model.save_pretrained(save_path)
+        tokenizer.save_pretrained(save_path)
     else:
         if not os.path.exists("./checkpoint"):
             os.makedirs("./checkpoint", exist_ok=True)
         model_id: str = grasp_model.model.config._name_or_path
-        save_path = os.path.join("./checkpoint", f"{model_id.replace('/', '-')}.pth")
-        torch.save(grasp_model, save_path)
+        save_path = os.path.join("./checkpoint", f"{model_id.replace('/', '-')}")
+        grasp_model.model.save_pretrained(save_path)
+        tokenizer.save_pretrained(save_path)
 
     # Recovery training if enabled
     if recovery:
@@ -143,11 +143,18 @@ def main(
             tokenizer=tokenizer,
             output_dir=os.path.dirname(save_path),
             log_file=log_file,
-            train_device=train_device,
             **kwargs
         )
         # Save the recovered model
-        torch.save(grasp_model, save_path.replace(".pth", "_recovered.pth"))
+        if save_path:
+            save_path = os.path.join(save_path, "recovered")
+        else:          
+            if not os.path.exists("./checkpoint"):
+                os.makedirs("./checkpoint", exist_ok=True)
+            model_id: str = grasp_model.config._name_or_path
+            save_path = os.path.join("./checkpoint", f"{model_id.replace('/', '-')}", "recovered")
+        grasp_model.save_pretrained(save_path)
+        tokenizer.save_pretrained(save_path)
 
     return grasp_model
 
@@ -178,7 +185,7 @@ def parse_args():
                       help="Target compression ratio")
     parser.add_argument("--threshold_ratio", type=float, default=None,
                       help="Threshold ratio for adaptive rank selection")
-    parser.add_argument("--device", type=str, choices=["cuda", "cpu"], default="cuda",
+    parser.add_argument("--device", type=str, default="cuda",
                       help="Device to run the model on")
     parser.add_argument("--save_path", type=str, default=None,
                       help="Path to save the compressed model")
@@ -226,8 +233,6 @@ def parse_args():
                       help="Path to checkpoint to resume from")
     parser.add_argument("--prompt_template_name", type=str, default="alpaca",
                       help="Name of prompt template to use")
-    parser.add_argument("--train_device", type=str, default="0",
-                      help="Device to train on")
     
     # evaluation arguments
     parser.add_argument("--evaluate", action="store_true",
@@ -297,20 +302,5 @@ if __name__ == "__main__":
         verbose=args.verbose,
         recovery=args.recovery,
         log_file=args.log_file,
-        train_device=args.train_device,
         **kwargs
     )
-
-    if args.evaluate:
-        results = evaluate_model(
-            model=grasp_model.model,
-            tokenizer=tokenizer,
-            model_name=args.model_name_or_path,
-            tasks=args.eval_tasks,
-            eval_ppl=args.eval_ppl,
-            num_fewshot=args.num_fewshot,
-            limit=args.limit,
-            batch_size=args.batch_size,
-            device=args.device,
-            log_file=args.log_file
-        )

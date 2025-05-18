@@ -2,17 +2,19 @@
 
 # Required arguments
 export MODEL_NAME_OR_PATH="meta-llama/Llama-2-7b-hf"
+export MODEL_NAME="Llama2-7B"
 export DATASET_NAME="wikitext2"
 
 # Compression arguments
 export LAYERS_ID=""  # Optional, use empty string for None
-export NUM_PRUNE_LAYERS=7  # Optional, use empty string for None
+export NUM_PRUNE_LAYERS=8  # Optional, use empty string for None
 export MLP_TARGET_LAYER_TYPES="down_proj up_proj gate_proj"
 export ATTN_TARGET_LAYER_TYPES="q_proj k_proj v_proj o_proj"
 export METRIC="taylor" # "gradient", "taylor"
-export COMPRESSION_RATIO=0.9  # Optional, use empty string for None
-export DEVICE="cuda" # cuda:0, cuda:1, etc.
-export SAVE_PATH=""  # Optional, use empty string for None
+export COMPRESSION_RATIO=0.95  # Optional, use empty string for None
+export DEVICE="cuda"
+export VISIBLE_DEVICE="4"  # cuda:0, cuda:1, etc.
+export SAVE_PATH="checkpoint/${MODEL_NAME}"  # Optional, use empty string for None
 export ANGULAR=false
 export ALLOCATION_AWARE=false
 export MERGE=false
@@ -20,7 +22,7 @@ export VERBOSE=true
 export RECOVERY=true
 
 # Calibration arguments
-export NUM_SAMPLES=512
+export NUM_SAMPLES=256
 export BATCH_SIZE=1
 export SEQ_LEN=512
 export PADDING="max_length"
@@ -37,12 +39,13 @@ export TRAIN_ON_INPUTS=false
 export ADD_EOS_TOKEN=false
 export RESUME_FROM_CHECKPOINT=""  # Optional, use empty string for None
 export PROMPT_TEMPLATE_NAME="alpaca"
-export TRAIN_DEVICE="0"
 
 # Evaluation arguments
-export EVALUATE=true
+export EVAL_DEVICE="4"
+export NUM_GPUS=$(echo "$EVAL_DEVICE" | awk -F',' '{print NF}')
+export EVALUATE=false
+export EVAL_TASKS="winogrande"
 export EVAL_PPL="wikitext2" # "wikitext2,ptb,c4
-export EVAL_TASKS="boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa" # "boolq,piqa,hellaswag,winogrande,arc_easy,arc_challenge,openbookqa"
 export NUM_FEWSHOT=0
 export LIMIT=-1
 
