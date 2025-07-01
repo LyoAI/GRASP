@@ -127,6 +127,7 @@ def main(
     if save_path:
         grasp_model.model.save_pretrained(save_path)
         tokenizer.save_pretrained(save_path)
+        torch.save(grasp_model.model, os.path.join(save_path, "unrecovered_model.pth"))
     else:
         if not os.path.exists("./checkpoint"):
             os.makedirs("./checkpoint", exist_ok=True)
@@ -143,11 +144,13 @@ def main(
             tokenizer=tokenizer,
             output_dir=os.path.dirname(save_path),
             log_file=log_file,
+            merge=merge,
             **kwargs
         )
         # Save the recovered model
         if save_path:
             save_path = os.path.join(save_path, "recovered")
+            torch.save(grasp_model.model, os.path.join(save_path, "recovered_model.pth"))
         else:          
             if not os.path.exists("./checkpoint"):
                 os.makedirs("./checkpoint", exist_ok=True)

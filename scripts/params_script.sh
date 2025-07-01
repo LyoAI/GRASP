@@ -11,15 +11,15 @@ export NUM_PRUNE_LAYERS=8  # Optional, use empty string for None
 export MLP_TARGET_LAYER_TYPES="down_proj up_proj gate_proj"
 export ATTN_TARGET_LAYER_TYPES="q_proj k_proj v_proj o_proj"
 export METRIC="taylor" # "gradient", "taylor"
-export COMPRESSION_RATIO=0.95  # Optional, use empty string for None
+export COMPRESSION_RATIO=0.7  # Optional, use empty string for None
 export DEVICE="cuda"
-export VISIBLE_DEVICE="4"  # cuda:0, cuda:1, etc.
-export SAVE_PATH="checkpoint/${MODEL_NAME}"  # Optional, use empty string for None
+export VISIBLE_DEVICE="3"  # cuda:0, cuda:1, etc.
+export SAVE_PATH="checkpoint/${MODEL_NAME}_${COMPRESSION_RATIO}"  # Optional, use empty string for None
 export ANGULAR=false
 export ALLOCATION_AWARE=false
-export MERGE=false
+export MERGE=true
 export VERBOSE=true
-export RECOVERY=true
+export RECOVERY=false
 
 # Calibration arguments
 export NUM_SAMPLES=256
@@ -43,7 +43,7 @@ export PROMPT_TEMPLATE_NAME="alpaca"
 # Evaluation arguments
 export EVAL_DEVICE="4"
 export NUM_GPUS=$(echo "$EVAL_DEVICE" | awk -F',' '{print NF}')
-export EVALUATE=false
+export EVALUATE=true
 export EVAL_TASKS="winogrande"
 export EVAL_PPL="wikitext2" # "wikitext2,ptb,c4
 export NUM_FEWSHOT=0
