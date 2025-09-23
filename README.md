@@ -1,11 +1,16 @@
-# 🚀GRASP: Gradient-based Retention of Adaptive Singular Parameters
+<p align="center">
+<h1 align="center">GRASP: Replace Redundant Layers with Adaptive Singular Parameters for Efficient Model Compression
 
-**The official code for the paper** 📃 "[Rethinking Layer Removal: A Hybrid Pruning Framework Combining Layer Removal and Singular Value Selection for Efficient LLM Compression](https://arxiv.org/abs/2501.00339)".
+<p align="center">
+    <a href="https://arxiv.org/abs/2501.00339"><img alt="Paper" src="https://img.shields.io/badge/📄-Paper-orange"></a>
+    <a href="https://github.com/LyoAI/GRASP/blob/main/LICENSE"><img alt="GitHub license" src="https://img.shields.io/github/license/LyoAI/GRASP"></a>
+</p>
 
-![GRASP](./assets/GRASP.png)
 
-In this paper, we propose **GRASP (Gradient-based Retention of Adaptive Singular Parameters)**, which preserves representation-critical singular values to mitigate representation instability caused by pure layer removal. By selectively applying singular value decomposition (SVD) to redundant layers, GRASP achieves efficient compression while maintaining representation stability with minimal overhead.
-
+## 🔍Overview
+ In this paper, we propose **GRASP**, a novel compression framework that mitigates this issue by preserving sensitivity-aware singular values. Unlike direct layer pruning, GRASP leverages gradient-based attribution on a small calibration dataset to adaptively identify and retain critical singular components. By replacing redundant layers with only a minimal set of parameters, GRASP achieves efficient compression while maintaining strong performance with minimal overhead. 
+ 
+![GRASP](./assets/main.png)
 
 
 ## 📊 Evaluation Results
@@ -21,7 +26,6 @@ In this paper, we propose **GRASP (Gradient-based Retention of Adaptive Singular
 
 - **GRASP** denotes compressing dense model without post-training for recovery
 - **GRASP*** denotes compressing dense model with post-training on Alpaca dataset for 1 epoch
-
 
 
 ## 🎯Quick Start
@@ -62,7 +66,6 @@ pip install -r requirements.txt
    ```
 
 
-
 ## 📐Evaluation
 
 **To evaluate the model, use the following script:**
@@ -72,14 +75,13 @@ bash scripts/run_evaluate.sh
 ```
 
 
-
 ## 📌Citation
 
 **If you find the repository or paper helpful, please cite our work:**
 
 ```
-@article{liu2024rethinking,
-  title={Rethinking Layer Removal: Preserving Critical Components with Task-Aware Singular Value Decomposition},
+@article{liu2024grasp,
+  title={GRASP: Replace Redundant Layers with Adaptive Singular Parameters for Efficient Model Compression},
   author={Liu, Kainan and Zhang, Yong and Cheng, Ning and Li, Zhitao and Wang, Shaojun and Xiao, Jing},
   journal={arXiv preprint arXiv:2501.00339},
   year={2024}
