@@ -6,6 +6,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 from typing import Literal, Optional, List, Union
 from tools.utils_func import block_influence, adaptive_rank_selection
+from transformers import AutoModelForCausalLM, AutoConfig, PreTrainedModel
 
 logger = logging.getLogger(__name__)
 
@@ -79,9 +80,9 @@ class GRASPLayer(nn.Module):
         return torch.mm(x.view(b*s, -1), W_reconstructed.t()).view(b, s, -1)
 
 
-class GRASPModel(nn.Module):
+class GRASPBaseModel(nn.Module):
     def __init__(self, model: nn.Module, *args, **kwargs) -> None:
-        super(GRASPModel, self).__init__(*args, **kwargs)
+        super(GRASPBaseModel, self).__init__(*args, **kwargs)
         self.model = model
         for params in self.model.parameters():
             params.requires_grad = False
@@ -95,20 +96,6 @@ class GRASPModel(nn.Module):
             if isinstance(module, nn.Linear) and "lm_head" not in module_name:
                 module.compression_ratio = self_define_ratio
         '''
-        # compression_ratios = {}  # To store layer compression ratios for verification/debugging
-        
-        # for module_name, module in self.model.named_modules():
-        #     if isinstance(module, nn.Linear) and "lm_head" not in module_name:
-        #         # Extract layer index from module_name, assuming a consistent naming pattern
-        #         layer_index = self._extract_layer_index(module_name)
-        #         if layer_index is not None:
-        #             if layer_index in redundant_layers:
-        #                 module.compression_ratio = 0.8
-        #             else:
-        #                 module.compression_ratio = 0.1
-        #             compression_ratios[module_name] = module.compression_ratio
-        
-        # return compression_ratios  # Optional, for debugging
         pass
 
     @staticmethod
@@ -324,7 +311,7 @@ class GRASPModel(nn.Module):
                 grasp_layer_names.append(name)
                 continue
         if not grasp_layer_names:
-            logger.info("GRASPLayer not found in current model, please use GRASPModel.replace_with_GRASPLayer first")
+            logger.info("GRASPLayer not found in current model, please use GRASPBaseModel.replace_with_GRASPLayer first")
 
         return grasp_layer_names
 
@@ -332,7 +319,7 @@ class GRASPModel(nn.Module):
         setup_logger(log_file=log_file)
         grasp_layer_names = self.check_exists_grasp_layer()
         if grasp_layer_names is None:
-            raise NotImplementedError("GRASPLayer not found, can not compute gradients, please use GRASPModel.replace_with_GRASPLayer first")
+            raise NotImplementedError("GRASPLayer not found, can not compute gradients, please use GRASPBaseModel.replace_with_GRASPLayer first")
 
         iterator = tqdm(calibration_dataloader, desc="Gradients Collection", total=len(calibration_dataloader), leave=True)
         grasp_layer_grads = {}
@@ -467,3 +454,14 @@ class GRASPModel(nn.Module):
             if "cuda" in device:
                 torch.cuda.empty_cache()
         return
+
+
+class GRASPModel(PreTrainedModel):
+    config_class = AutoConfig
+    def __init__(self, config, grasp_base_model: GRASPBaseModel, *args, **kwargs):
+        super().__init__(config, *args, **kwargs)
+        self.model = grasp_base_model.model
+        self.config = config
+
+    def forward(self, *args, **kwargs):
+        return self.model(*args, **kwargs)

@@ -7,7 +7,7 @@ from tqdm import tqdm
 from torch.utils.data import DataLoader
 from typing import Union, Literal, Optional, List
 import logging
-from modeling_grasp import GRASPModel
+from modeling_grasp import GRASPBaseModel, GRASPModel
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from alpaca_grasp import train
 from dataset.loader import get_calibration_dataloader
@@ -53,7 +53,7 @@ def main(
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
     tokenizer.pad_token = tokenizer.eos_token
 
-    grasp_model = GRASPModel(model=model)
+    grasp_model = GRASPBaseModel(model=model)
     grasp_model.model.to(device=device)
 
     if layers_id is None:
@@ -124,17 +124,18 @@ def main(
             logger.info("=======> Skip Compressing This Block")
     
     logger.info("=======> Done!")
-    if save_path:
-        grasp_model.model.save_pretrained(save_path)
-        tokenizer.save_pretrained(save_path)
-        torch.save(grasp_model.model, os.path.join(save_path, "unrecovered_model.pth"))
-    else:
+    if save_path is None:
         if not os.path.exists("./checkpoint"):
             os.makedirs("./checkpoint", exist_ok=True)
         model_id: str = grasp_model.model.config._name_or_path
         save_path = os.path.join("./checkpoint", f"{model_id.replace('/', '-')}")
-        grasp_model.model.save_pretrained(save_path)
-        tokenizer.save_pretrained(save_path)
+    config = grasp_model.model.config
+    config.auto_map = {
+        "AutoModelForCausalLM": "modeling_grasp.GRASPModel"
+    }
+    model_to_save = GRASPModel(config=config, grasp_base_model=grasp_model)
+    model_to_save.save_pretrained(save_path)
+    tokenizer.save_pretrained(save_path)
 
     # Recovery training if enabled
     if recovery:
@@ -150,16 +151,18 @@ def main(
         # Save the recovered model
         if save_path:
             save_path = os.path.join(save_path, "recovered")
-            torch.save(grasp_model.model, os.path.join(save_path, "recovered_model.pth"))
         else:          
             if not os.path.exists("./checkpoint"):
                 os.makedirs("./checkpoint", exist_ok=True)
             model_id: str = grasp_model.config._name_or_path
             save_path = os.path.join("./checkpoint", f"{model_id.replace('/', '-')}", "recovered")
-        grasp_model.save_pretrained(save_path)
+        config = grasp_model.model.config
+        config.auto_map = {
+            "AutoModelForCausalLM": "modeling_grasp.GRASPModel"
+        }
+        model_to_save = GRASPModel(config=config, grasp_base_model=grasp_model)
+        model_to_save.save_pretrained(save_path)
         tokenizer.save_pretrained(save_path)
-
-    return grasp_model
 
 
 def parse_args():
@@ -275,7 +278,7 @@ if __name__ == "__main__":
         kwargs = {
             "data_path": args.data_path,
             "batch_size": args.train_batch_size,
-            "mirco_batch_size": args.micro_batch_size,
+            "micro_batch_size": args.micro_batch_size,
             "num_epochs": args.num_epochs,
             "learning_rate": args.learning_rate,
             "max_length": args.max_length,
@@ -287,7 +290,7 @@ if __name__ == "__main__":
         }
     
     # Run main compression function
-    grasp_model = main(
+    main(
         model_name_or_path=args.model_name_or_path,
         calibration_dataloader=calibration_dataloader,
         layers_id=args.layers_id,
